@@ -36,6 +36,7 @@ local struct_mt = {
     addunionfield = function(self, name, stype, descriminator, descriminant, docstring, id)
       assert(type(name) == "string", "the name of the field must be a string")
       assert(is_schematype(stype), "the type of the field must be a schema type")
+      print(descriminator, descriminant)
       assert(type(descriminator) == "number", "union specifier must be present")
       assert(type(descriminant) == "number", "union descriminant must be present")
       if docstring ~= nil and type(docstring) ~= "string" then
@@ -48,6 +49,17 @@ local struct_mt = {
       local field = {kind = "union", name = name, type = stype, docstring = docstring, descriminator = descriminator, descriminant = descriminant, id = id}
       self.fields[#self.fields] = field
       self.field_by_name[name] = field
+    end,
+    define = function(self, def)
+      local list = {}
+      local context = {val=self}
+      for k, v in ipairs(def) do
+        v:insertall(list, context)
+      end
+      --FIXME: sort
+      for k, v in ipairs(list) do
+        v:execute()
+      end
     end,
   },
   __call = function(self, ...)
@@ -66,7 +78,9 @@ function newstruct(name, docstring, id)
     components = {},
     count = 0,
     id = id,
-    kind = 'struct'
+    kind = 'struct',
+    fields = {},
+    field_by_name = {},
   }
   return setmetatable(self, struct_mt)
 end
@@ -81,7 +95,7 @@ local union_mt = {
       return newvariant(self, self.descpos, descval)
     end
   },
-  -- __call = function(self, ...) return defer_union_def(self, ...) end
+  __call = function(self, ...) return defer_union_def(self, ...) end
 }
 
 function newunion(parent, descpos, enum)
@@ -101,7 +115,7 @@ local variant_mt = {
       if docstring ~= nil and type(docstring) ~= "string" then
         error "the docstring must be a string if present"
       end
-      return self.parent.parent:addunionfield(name, stype, self.descpos, self.descval, docstring, id)
+      return (self.parent.parent:addunionfield(name, stype, self.descpos, self.descval, docstring, id))
     end,
     addunion = function(self, name, docstring, id)
       assert(type(name) == "string", "the name of the field must be a string")
@@ -121,15 +135,17 @@ local variant_mt = {
       return self.parent.parent:addunionfield(name, stype, descpos, descval, docstring, id)
     end,
   },
-  -- __call = function(self, ...) return defer_variant_def(self, ...) end
+  __call = function(self, ...) return defer_variant_def(self, ...) end
 }
 
-function newvariant(parent, name, docstring, id)
+function newvariant(parent, descpos, descval, id)
   local self = {
     parent = parent,
-    name = name,
-    docstring = docstring,
+    -- name = name,
+    -- docstring = docstring,
     id = id,
+    descpos = descpos,
+    descval = descval,
   }
   return setmetatable(self, variant_mt)
 end
@@ -145,6 +161,7 @@ local enum_mt = {
         id = hashing.hash{self.id, name}
       end
       self.variants[#self.variants + 1] = {name = name, docstring = docstring, id = id}
+      return #self.variants
     end
   },
   __call = function(self, ...)
@@ -156,9 +173,32 @@ function newenum(name, docstring, id)
   local self = {
     name = name,
     docstring = docstring,
-    id = id
+    id = id,
+    variants = {},
   }
   return setmetatable(self, enum_mt)
+end
+
+local text_mt = {
+  __call = function(self, ...)
+    return defer_field_def(self, ...)
+  end
+}
+
+local newtype_mt = {
+  __call = function(self, ...)
+    return defer_field_def(self, ...)
+  end
+}
+
+function newnewtype(name, basetype, docstring, id)
+  local self = {
+    name = name,
+    basetype = basetype,
+    docstring = docstring,
+    id = id,
+  }
+  return setmetatable(self, newtype_mt)
 end
 
 local interface_mt = {
@@ -218,11 +258,24 @@ local schema_mt = {
       self.exports[#self.exports + 1] = t
       self.export[name] = t
       return t
-    end
+    end,
+    newtype = function(self, name, basetype, docstring, id)
+      assert(type(name) == "string", "the name of the field must be a string")
+      if docstring ~= nil and type(docstring) ~= "string" then
+        error "the docstring must be a string if present"
+      end
+      if not id then
+        id = hashing.hash{self.id, name}
+      end
+      local t = newnewtype(name, basetype, docstring, id)
+      self.exports[#self.exports + 1] = t
+      self.export[name] = t
+      return t
+    end,
   }
 }
 
-local deferred_field_mt = {
+local defer_field_mt = {
   __index = {
     insertall = function(self, list, context)
       self.context = context
@@ -246,7 +299,7 @@ local deferred_field_mt = {
         self.order = val
       end
     elseif not self.docstring and type(val) == "string" then
-      self.docstring == val
+      self.docstring = val
     else
       error "unknown component of field declaration"
     end
@@ -254,11 +307,11 @@ local deferred_field_mt = {
   end
 }
 
-function deferred_field_def(stype, name)
-  return setmetatable({type = stype}, deferred_field_mt)(name)
+function defer_field_def(stype, name)
+  return setmetatable({type = stype}, defer_field_mt)(name)
 end
 
-local deferred_union_mt = {
+local defer_union_mt = {
   __index = {
     insertall = function(self, list, context)
       self.context = context
@@ -286,7 +339,7 @@ local deferred_union_mt = {
         self.order = val
       end
     elseif not self.docstring and type(val) == "string" then
-      self.docstring == val
+      self.docstring = val
     elseif not self.children and type(val) == "table" then
       self.children = val
     else
@@ -297,10 +350,10 @@ local deferred_union_mt = {
 }
 
 local function union(name)
-  return setmetatable({}, deferred_union_mt)(name)
+  return setmetatable({}, defer_union_mt)(name)
 end
 
-local deferred_variant_mt = {
+local defer_variant_mt = {
   __index = {
     insertall = function(self, list, context)
       self.context = context
@@ -328,7 +381,7 @@ local deferred_variant_mt = {
         self.order = val
       end
     elseif not self.docstring and type(val) == "string" then
-      self.docstring == val
+      self.docstring = val
     elseif not self.children and type(val) == "table" then
       self.children = val
     else
@@ -339,9 +392,60 @@ local deferred_variant_mt = {
 }
 
 local function variant(name)
-  return setmetatable({}, deferred_variant_mt)(name)
+  return setmetatable({}, defer_variant_mt)(name)
+end
+
+local function struct(name)
+  return setmetatable({}, struct_mt)(name)
+end
+
+local function text(name)
+  return setmetatable({}, text_mt)(name)
+end
+
+function is_schematype(stype)
+  -- FIXME: do this
+  return true
 end
 
 local function declare()
   return {}
 end
+
+local function newschema(name, description, id)
+  assert(type(name) == "string", "name must be a string")
+  local init = {
+    name = name,
+    description = description,
+    id = id,
+    exports = {},
+    export = {},
+  }
+  return setmetatable(init, schema_mt)
+end
+
+local primitive_mt = {
+  __call = function(self, ...)
+    return defer_field_def(self, ...)
+  end
+}
+local primitive_schema_hash = "ea381865dd61e2d8"
+
+local function newprimitive(name)
+  return setmetatable({
+    id = hashing.hash{primitive_schema_hash, name},
+    name = name,
+                      }, primitive_mt)
+end
+
+return {
+  u16 = newprimitive("u16"),
+  u32 = newprimitive("u32"),
+  u64 = newprimitive("u64"),
+  list = function() end,
+  text = text,
+  union = union,
+  enum = enum,
+  variant = variant,
+  newschema = newschema,
+}

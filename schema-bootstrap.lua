@@ -1,10 +1,11 @@
-
+-- parse from schema, save to buf, read from buf, compare
+--
 local schema = require 'schema'
 
-local text, union, enum, variant = schema.text, schema.union schema.enum, schema.variant
+local text, union, enum, variant = schema.text, schema.union, schema.enum, schema.variant
 local u16, u64, list = schema.u16, schema.u64, schema.list
 
-local S = schema.create("schema", "the schema for saving and transmitting schemas")
+local S = schema.newschema("schema", "the schema for saving and transmitting schemas", "a3329f307fcd88f6")
 
 local stype = S:addstruct("type", "the type that a field may have")
 local struct = S:addstruct("struct", "a structure containing named fields")
@@ -88,7 +89,7 @@ local smethod = S:struct "method" "The definition of a method of an interface"
 local interface = S:struct "interface" "A definition of an interface"
 {
   text "name" (0) "A friendly name for the interface";
-  list(smethod) "methods" (1) "all the methods of the interface, in evolution order"
+  list(smethod) "methods" (1) "all the methods of the interface, in evolution order";
   typeid "id" (2) "A unique id automatically derived from the schema in which this interface lives. The collision domain is the same as for structs";
 }
 
@@ -114,6 +115,7 @@ local newtype = S:struct "newtype" "a distinct wrapper stored exactly like some 
   text "name" (0) "The name of the distinct wrapper";
   stype "base" (1) "The type being wrapped";
   typeid "id" (2) "A unique id automatically derived from context. The collision domain is the same as for struct.";
+  text "docstring" (3) "Expanded documentation about what the newtype means.";
 }
 
 stype:define {
