@@ -36,7 +36,6 @@ local struct_mt = {
     addunionfield = function(self, name, stype, descriminator, descriminant, docstring, id)
       assert(type(name) == "string", "the name of the field must be a string")
       assert(is_schematype(stype), "the type of the field must be a schema type")
-      print(descriminator, descriminant)
       assert(type(descriminator) == "number", "union specifier must be present")
       assert(type(descriminant) == "number", "union descriminant must be present")
       if docstring ~= nil and type(docstring) ~= "string" then
@@ -211,7 +210,7 @@ local interface_mt = {
       if not id then
         id = hashing.hash{self.id, name}
       end
-
+      -- TODO
     end
   },
   __call = function(self, ...) return defer_field_def(self, ...) end
@@ -231,8 +230,66 @@ function newinterface(name, docstring, id)
   return setmetatable(self, interface_mt)
 end
 
+local add_struct_mt = {
+  __call = function(self, val)
+    if not self.docstring and type(val) == "string" then
+      self.docstring = val
+    elseif type(val) == "table" then
+      local struct = self.context:addstruct(self.name, self.docstring)
+      struct:define(val)
+      return struct
+    end
+    return self
+  end
+}
+
+local add_enum_mt = {
+  __call = function(self, val)
+    if not self.docstring and type(val) == "string" then
+      self.docstring = val
+    elseif type(val) == "table" then
+      local enum = self.context:addenum(self.name, self.docstring)
+      for i, v in ipairs(val) do
+        enum:addvariant(v)
+      end
+      return enum
+    end
+    return self
+  end
+}
+
+local add_interface_mt = {
+  __call = function(self, val)
+    if not self.name then
+      assert(type(val) == "string", "the name of the interface must be a string")
+      self.name = val
+    elseif not self.docstring and type(val) == "string" then
+      self.docstring = val
+    elseif type(val) == "table" then
+      local interface = self.context:addinterface(self.name, self.docstring)
+      for i, v in ipairs(val) do
+        v.order = i - 1
+        interface:addmethod(v.name, v.docstring, v.args, v.results, v.id)
+      end
+      return interface
+    end
+    return self
+  end
+}
+
 local schema_mt = {
   __index = {
+    struct = function(self, name)
+      assert(type(name) == "string", "the name of the struct must be a string")
+      return setmetatable({context = self, name = name}, add_struct_mt)
+    end,
+    enum = function(self, name)
+      assert(type(name) == "string", "the name of the enum must be a string")
+      return setmetatable({context = self, name = name}, add_enum_mt)
+    end,
+    interface = function(self, name)
+      return setmetatable({context = self}, add_interface_mt)(name)
+    end,
     addstruct = function(self, name, docstring, id)
       assert(type(name) == "string", "the name of the field must be a string")
       if docstring ~= nil and type(docstring) ~= "string" then
@@ -259,6 +316,19 @@ local schema_mt = {
       self.export[name] = t
       return t
     end,
+    addinterface = function(self, name, docstring, id)
+      assert(type(name) == "string", "the name of the field must be a string")
+      if docstring ~= nil and type(docstring) ~= "string" then
+        error "the docstring must be a string if present"
+      end
+      if not id then
+        id = hashing.hash{self.id, name}
+      end
+      local struct = newinterface(name, docstring, id)
+      self.exports[#self.exports + 1] = struct
+      self.export[name] = struct
+      return struct
+    end,
     newtype = function(self, name, basetype, docstring, id)
       assert(type(name) == "string", "the name of the field must be a string")
       if docstring ~= nil and type(docstring) ~= "string" then
@@ -279,6 +349,7 @@ local defer_field_mt = {
   __index = {
     insertall = function(self, list, context)
       self.context = context
+      assert(self.order ~= nil, "fields must have an evolution order")
       list[#list + 1] = self
     end,
     execute = function(self)
@@ -292,12 +363,8 @@ local defer_field_mt = {
       else
         self.name = val
       end
-    elseif not self.order then
-      if type(val) ~= "number" then
-        error "the second thing in a field declaration after the type must be the evolution order which must be a number"
-      else
-        self.order = val
-      end
+    elseif not self.order and type(val) == "number" then
+      self.order = val
     elseif not self.docstring and type(val) == "string" then
       self.docstring = val
     else
@@ -391,6 +458,45 @@ local defer_variant_mt = {
   end
 }
 
+local defer_method_mt = {
+  __index = {
+    insertall = function(self, list, context)
+      self.context = context
+      assert(self.order ~= nil, "fields must have an evolution order")
+      list[#list + 1] = self
+    end,
+    execute = function(self)
+      self.context.val:addfield(self.name, self.type, self.docstring, self.id)
+    end,
+    to = function(self, results)
+      self.results = results
+      return self
+    end,
+  },
+  __call = function(self, val)
+    if not self.name then
+      if type(val) ~= "string" then
+        error "the first thing in a method declaration after `variant` must be the name which must be a string"
+      else
+        self.name = val
+      end
+    elseif not self.order then
+      if type(val) ~= "number" then
+        error "the second thing in a method declaration after `variant` must be the evolution order which must be a number"
+      else
+        self.order = val
+      end
+    elseif not self.docstring and type(val) == "string" then
+      self.docstring = val
+    elseif not self.children and type(val) == "table" then
+      self.parameters = val
+    else
+      error "unknown component of method declaration"
+    end
+    return self
+  end
+}
+
 local function variant(name)
   return setmetatable({}, defer_variant_mt)(name)
 end
@@ -403,9 +509,17 @@ local function text(name)
   return setmetatable({}, text_mt)(name)
 end
 
+local function enum(name)
+  return setmetatable({}, enum_mt)(name)
+end
+
+local function method(name)
+  return setmetatable({}, defer_method_mt)(name)
+end
+
 function is_schematype(stype)
   -- FIXME: do this
-  return true
+  return type(stype) == "table" -- and stype.kind
 end
 
 local function declare()
@@ -438,14 +552,47 @@ local function newprimitive(name)
                       }, primitive_mt)
 end
 
-return {
-  u16 = newprimitive("u16"),
-  u32 = newprimitive("u32"),
-  u64 = newprimitive("u64"),
-  list = function() end,
+local bound_generic_mt = {
+  __call = function(self, ...)
+    return defer_field_def(self, ...)
+  end
+}
+
+local generic_mt = {
+  __call = function(self, ...)
+    local args = { ... }
+    assert(#args > 0, "must have at least one arg to generic type")
+    for i, v in ipairs(args) do
+      if not is_schematype(v) then
+        error("generic type args must all be schematypes, got " .. type(v))
+      end
+    end
+    return setmetatable({args = args}, bound_generic_mt)
+  end
+}
+
+local function newgeneric(kind, ty)
+  return setmetatable({kind="kind", type=ty}, generic_mt)
+end
+
+local exports = {
+  list = newgeneric("list"),
+  maybe = newgeneric("maybe"),
   text = text,
   union = union,
   enum = enum,
+  method = method,
   variant = variant,
   newschema = newschema,
 }
+local prims = {
+  "u8", "u16", "u32", "u64",
+  "i8", "i16", "i32", "i64",
+  "float", "double", "bool",
+  "void", "bottom",
+}
+for i, prim in ipairs(prims) do
+  exports[prim] = newprimitive(prim)
+end
+
+return exports

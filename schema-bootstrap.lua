@@ -3,7 +3,8 @@
 local schema = require 'schema'
 
 local text, union, enum, variant = schema.text, schema.union, schema.enum, schema.variant
-local u16, u64, list = schema.u16, schema.u64, schema.list
+local maybe, method = schema.maybe, schema.method
+local bool, u8, u16, u64, list = schema.bool, schema.u8, schema.u16, schema.u64, schema.list
 
 local S = schema.newschema("schema", "the schema for saving and transmitting schemas", "a3329f307fcd88f6")
 
@@ -83,7 +84,8 @@ local smethod = S:struct "method" "The definition of a method of an interface"
   text "name" (0) "A friendly name for the method";
   list(sargument) "parameters" (1) "What arguments are given to the method when it is called";
   list(sargument) "results" (2) "What arguments are returned by the method when it is called";
-  fieldid "id" (3) "A unique id automatically derived from context to check forward compatibility. The collision domain is only within the interface.";
+  text "docstring" (3) "expanded documentation describing the usage and meaning of the field";
+  fieldid "id" (4) "A unique id automatically derived from context to check forward compatibility. The collision domain is only within the interface.";
 }
 
 local interface = S:struct "interface" "A definition of an interface"

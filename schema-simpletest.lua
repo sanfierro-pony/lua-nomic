@@ -33,4 +33,6 @@ field:define {
   fieldid "id" (8) "The unique key for a field automatically derived from the initial name and the struct to verify forward compatibility. The collision domain for this key is within the parent struct.";
 }
 
+local json = require "json"
+print(json.stringify(field))
 p(field)
