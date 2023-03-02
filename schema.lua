@@ -62,7 +62,7 @@ local struct_mt = {
       for k, v in ipairs(def) do
         v:insertall(list, context)
       end
-      --FIXME: sort
+      table.sort(list, function(a, b) return a.order < b.order end)
       for k, v in ipairs(list) do
         v:execute()
       end
