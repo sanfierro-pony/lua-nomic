@@ -7,11 +7,18 @@ local defer_field_def, defer_union_def, defer_variant_def
 
 local is_schematype
 
+local primitive_schema_hash = "ea381865dd61e2d8"
+
 local struct_mt = {
   __index = {
     addfield = function(self, name, stype, docstring, id)
       assert(type(name) == "string", "the name of the field must be a string")
-      assert(is_schematype(stype), "the type of the field must be a schema type")
+      if not is_schematype(stype) then
+        if p then
+          p(stype)
+        end
+        error("the type of field " .. name .. " must be a schema type, got " .. type(stype) .. " " .. tostring(stype))
+      end
       if docstring ~= nil and type(docstring) ~= "string" then
         error "the docstring must be a string if present"
       end
@@ -110,7 +117,12 @@ local variant_mt = {
   __index = {
     addfield = function(self, name, stype, docstring, id)
       assert(type(name) == "string", "the name of the field must be a string")
-      assert(is_schematype(stype), "the type of the field must be a schema type")
+      if not is_schematype(stype) then
+        if p then
+          p(stype)
+        end
+        error("the type of field " .. name .. " must be a schema type, got " .. type(stype) .. " " .. tostring(stype))
+      end
       if docstring ~= nil and type(docstring) ~= "string" then
         error "the docstring must be a string if present"
       end
@@ -173,6 +185,7 @@ function newenum(name, docstring, id)
     name = name,
     docstring = docstring,
     id = id,
+    kind = 'enum',
     variants = {},
   }
   return setmetatable(self, enum_mt)
@@ -193,6 +206,7 @@ local newtype_mt = {
 function newnewtype(name, basetype, docstring, id)
   local self = {
     name = name,
+    kind = "newtype",
     basetype = basetype,
     docstring = docstring,
     id = id,
@@ -417,7 +431,7 @@ local defer_union_mt = {
 }
 
 local function union(name)
-  return setmetatable({}, defer_union_mt)(name)
+  return setmetatable({kind="union"}, defer_union_mt)(name)
 end
 
 local defer_variant_mt = {
@@ -506,7 +520,8 @@ local function struct(name)
 end
 
 local function text(name)
-  return setmetatable({}, text_mt)(name)
+  -- FIXME: what should stype for text be
+  return setmetatable({kind="text"}, text_mt)(name)
 end
 
 local function enum(name)
@@ -518,8 +533,7 @@ local function method(name)
 end
 
 function is_schematype(stype)
-  -- FIXME: do this
-  return type(stype) == "table" -- and stype.kind
+  return type(stype) == "table" and stype.kind
 end
 
 local function declare()
@@ -539,17 +553,20 @@ local function newschema(name, description, id)
 end
 
 local primitive_mt = {
+  __index = {
+    kind = "primitive",
+  },
   __call = function(self, ...)
     return defer_field_def(self, ...)
   end
 }
-local primitive_schema_hash = "ea381865dd61e2d8"
 
 local function newprimitive(name)
-  return setmetatable({
-    id = hashing.hash{primitive_schema_hash, name},
-    name = name,
-                      }, primitive_mt)
+  return setmetatable(
+    {
+      id = hashing.hash{primitive_schema_hash, name},
+      name = name,
+    }, primitive_mt)
 end
 
 local bound_generic_mt = {
@@ -567,12 +584,12 @@ local generic_mt = {
         error("generic type args must all be schematypes, got " .. type(v))
       end
     end
-    return setmetatable({args = args}, bound_generic_mt)
+    return setmetatable({kind = self.kind, args = args}, bound_generic_mt)
   end
 }
 
-local function newgeneric(kind, ty)
-  return setmetatable({kind="kind", type=ty}, generic_mt)
+local function newgeneric(kind)
+  return setmetatable({kind=kind}, generic_mt)
 end
 
 local exports = {

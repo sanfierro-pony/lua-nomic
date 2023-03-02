@@ -53,6 +53,8 @@ senum:define {
   typeid "id" (2) "The unique key for an enum automatically derived from parent context. The collision domain is the same as a struct id.";
 }
 
+--FIXME: export list of primitives from schema.lua to use here so can't accidentally not match?
+--FIXME: newprimitive() as used in schema.lua isn't even giving them a numeric id yet
 local primitive = S:enum "primitive" "An enumeration of the primitive non-pointer types"
 {
   "bool";
@@ -166,7 +168,7 @@ local schema_export = S:struct "export" "Something exported from a schema"
     };
     variant "enum" (3) "The export is an enum"
     {
-      enum "type" (4) "The exported enum";
+      senum "type" (4) "The exported enum";
     };
     variant "generic" (5) "The export is a generic type"
     {
