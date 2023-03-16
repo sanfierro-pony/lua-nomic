@@ -13,8 +13,16 @@
 
   outputs = { self, nixpkgs, luvitpkgs, flake-utils }:
     flake-utils.lib.eachDefaultSystem (system:
-      let pkgs = nixpkgs.legacyPackages.${system};
-      in {
+      let
+        pkgs = nixpkgs.legacyPackages.${system};
+        # Workaround: put just the luacheck binary in as having the main package in buildInputs
+        # seems to break lua requires for everything else in that dev shell
+        luacheck-standalone = pkgs.runCommand "luacheck-standalone" { } ''
+          mkdir -p $out/bin
+          ln -s ${pkgs.luajitPackages.luacheck}/bin/luacheck $out/bin/luacheck
+        '';
+      in
+      {
         packages = rec {
           hello = pkgs.hello;
           default = hello;
@@ -24,9 +32,27 @@
             flake-utils.lib.mkApp { drv = self.packages.${system}.hello; };
           default = hello;
         };
+        checks = {
+          tests = pkgs.runCommand "tests" {
+            nativeBuildInputs = [
+              luvitpkgs.packages.${system}.lit
+              luvitpkgs.packages.${system}.luvit
+            ];
+          } ''
+          set -euo pipefail
+          for test in *-test.lua; do
+            echo "Running test $test"
+            luvit "$test"
+          done
+          mkdir $out
+          '';
+        };
         devShells = rec {
           nomic = pkgs.mkShell {
-            buildInputs = [ luvitpkgs.packages.${system}.lit ];
+            buildInputs = [
+              luvitpkgs.packages.${system}.lit
+              luacheck-standalone
+            ];
           };
           default = nomic;
         };
