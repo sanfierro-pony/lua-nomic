@@ -1,6 +1,6 @@
 
 
-local proxy_origins = setmetatable({}, {__mode = 'k'}})
+local proxy_origins = setmetatable({}, {__mode = 'k'})
 local proxy_owners = setmetatable({}, {__mode = 'k'})
 local proxy_refs = setmetatable({}, {__mode = 'k'})
 
@@ -83,8 +83,8 @@ function proxy_get(object, module_src, module_dst) -- proxy an object from the s
   if module_dst.proxy_of[object] then return module_dst.proxy_of[object] end
   local proxy = setmetatable({}, proxy_mt)
   proxy_origins[proxy] = module_src
-  proxy_owner[proxy] = module_dst
-  proxy_ref[proxy] = object
+  proxy_owners[proxy] = module_dst
+  proxy_refs[proxy] = object
   module_dst.proxy_of[object] = proxy
   return proxy
 end
@@ -117,7 +117,7 @@ local function env_create(module)
     assert = assert,
     -- collectgarbage is forbidden to prevent messing with memory tracking
     -- dofile is forbidden because there is no default filesystem access
-    error = error -- this will probably need to be sandboxed in the future to allow errors with nonstring values
+    error = error, -- this will probably need to be sandboxed in the future to allow errors with nonstring values
     -- _G added later
     getmetatable = sandboxed_getmetatable,
     ipairs = ipairs,
@@ -189,3 +189,14 @@ local function module_create(code, source, ...)
   local fn, err = env.load(code, source or '=(module_create)')
   return translate_args(module, root_module, fn, err)
 end
+
+local function define(name, code, source, ...)
+  local module = module_create(code, source, ...)
+  -- here is where i'd store the module in the module registry... IF I HAD ONE!
+  print("module " .. name .. " defined")
+  return module
+end
+
+return {
+  define = define
+}
