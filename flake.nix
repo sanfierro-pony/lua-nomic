@@ -33,18 +33,20 @@
           default = hello;
         };
         checks = {
-          tests = pkgs.runCommand "tests" {
-            nativeBuildInputs = [
-              luvitpkgs.packages.${system}.lit
-              luvitpkgs.packages.${system}.luvit
-            ];
-          } ''
-          set -euo pipefail
-          for test in *-test.lua; do
-            echo "Running test $test"
-            luvit "$test"
-          done
-          mkdir $out
+          tests = pkgs.runCommand "tests"
+            {
+              nativeBuildInputs = [
+                luvitpkgs.packages.${system}.lit
+                luvitpkgs.packages.${system}.luvit
+              ];
+            } ''
+            set -euo pipefail
+            cd ${self}
+            for test in *-test.lua; do
+              echo "Running test $test"
+              luvit "$test"
+            done
+            mkdir $out
           '';
         };
         devShells = rec {

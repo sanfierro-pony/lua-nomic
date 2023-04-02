@@ -9,6 +9,7 @@ success, bint64 = pcall(require, "bint")
 bint64 = success and bint64(64) or nil
 
 local pow = math.pow or require "primitives.polyfill.math_pow"
+local pointers = require "primitives.primitives-pointer"
 local band = bit and bit.band
 
 local hasInt64 = math.type and math.type(922337203685480000) == 'integer' or false
@@ -40,6 +41,11 @@ local function xorBufPart(buf, offset, length, defaultBuf)
     bufPart = bufPart .. string.char(bxor(first, second))
   end
   return bufPart
+end
+
+local function readPointer(buf, pointerOffset)
+  local lsw, msw, _ = string.unpack("<I2", buf:sub(pointerOffset + 1, pointerOffset + 1 + 8))
+  return pointers.readPointer(lsw, msw)
 end
 
 -- this function is special and takes offset and length in bits
@@ -228,6 +234,19 @@ local function packBigInt64(val, _signed, defaultBuf)
 end
 
 local primitives = {
+  readbool = readBool,
+  readi8 = function(...) return readLuaInt(1, true, ...) end,
+  readu8 = function(...) return readLuaInt(1, false, ...) end,
+
+  readi16 = function(...) return readLuaInt(2, true, ...) end,
+  readu16 = function(...) return readLuaInt(2, false, ...) end,
+
+  readi32 = function(...) return readLuaInt(4, true, ...) end,
+  readu32 = function(...) return readLuaInt(4, false, ...) end,
+
+  readi64 = function(...) return readLuaInt(8, true, ...) end,
+  readu64 = function(...) return readLuaInt(8, false, ...) end,
+
   readBool = readBool,
   readInt8 = function(...) return readLuaInt(1, ...) end,
   readInt16 = function(...) return readLuaInt(2, ...) end,

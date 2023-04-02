@@ -41,6 +41,7 @@ local struct_mt = {
       return newunion(self, #self.fields, enum)
     end,
     addunionfield = function(self, name, stype, descriminator, descriminant, docstring, id)
+      print("struct_md:addunionfield", name, stype, descriminator, descriminant)
       assert(type(name) == "string", "the name of the field must be a string")
       assert(is_schematype(stype), "the type of the field must be a schema type")
       assert(type(descriminator) == "number", "union specifier must be present")
@@ -53,7 +54,7 @@ local struct_mt = {
       end
 
       local field = {kind = "union", name = name, type = stype, docstring = docstring, descriminator = descriminator, descriminant = descriminant, id = id}
-      self.fields[#self.fields] = field
+      self.fields[#self.fields + 1] = field
       self.field_by_name[name] = field
     end,
     define = function(self, def)
@@ -97,7 +98,10 @@ local union_mt = {
       if not id then
         id = hashing.hash{self.id, name}
       end
+      assert(type(name) == "string", "name must be a string")
+      assert(self.descpos ~= nil, "descpos must be set")
       local descval = self.enum:addvariant(name, docstring, id)
+      assert(descval ~= nil, "descval must be set")
       return newvariant(self, self.descpos, descval)
     end
   },
@@ -105,6 +109,7 @@ local union_mt = {
 }
 
 function newunion(parent, descpos, enum)
+  assert(type(descpos) == "number", "descpos must be a number")
   local self = {
     parent = parent,
     descpos = descpos,
@@ -116,6 +121,7 @@ end
 local variant_mt = {
   __index = {
     addfield = function(self, name, stype, docstring, id)
+      print("variant_mt:addfield", name, stype)
       assert(type(name) == "string", "the name of the field must be a string")
       if not is_schematype(stype) then
         if p then
@@ -126,6 +132,10 @@ local variant_mt = {
       if docstring ~= nil and type(docstring) ~= "string" then
         error "the docstring must be a string if present"
       end
+      if self.descpos == nil or self.descval == nil then
+        (p or print)("variant_mt:addfield descpos descval self ", self.descpos, self.descval, self)
+        error "BUG: missing descpos or descval?"
+      end
       return (self.parent.parent:addunionfield(name, stype, self.descpos, self.descval, docstring, id))
     end,
     addunion = function(self, name, docstring, id)
@@ -135,7 +145,8 @@ local variant_mt = {
       end
       local enum = newenum(name, docstring, id)
       self:addfield(name, enum, docstring, id)
-      return newunion(self, self.count, enum)
+      p("variant_mt:addunion", self)
+      return newunion(self, #self.parent.parent.fields, enum)
     end,
     addunionfield = function(self, name, stype, descpos, descval, docstring, id)
       assert(type(name) == "string", "the name of the field must be a string")
@@ -150,6 +161,8 @@ local variant_mt = {
 }
 
 function newvariant(parent, descpos, descval, id)
+  assert(descpos ~= nil, "descpos must be set")
+  assert(descval ~= nil, "descval must be set")
   local self = {
     parent = parent,
     -- name = name,
@@ -171,8 +184,10 @@ local enum_mt = {
       if not id then
         id = hashing.hash{self.id, name}
       end
-      self.variants[#self.variants + 1] = {name = name, docstring = docstring, id = id}
-      return #self.variants
+      print ("enum_mt:addvariant", name, #self.variants)
+      local variantindex = #self.variants -- zero indexed, first variant needs to have index 0 to match capnp
+      self.variants[#self.variants + 1] = {name = name, docstring = docstring, id = id, variantindex = variantindex}
+      return variantindex
     end
   },
   __call = function(self, ...)
@@ -251,6 +266,7 @@ local add_struct_mt = {
     elseif type(val) == "table" then
       local struct = self.context:addstruct(self.name, self.docstring)
       struct:define(val)
+      p(struct)
       return struct
     end
     return self
@@ -561,11 +577,12 @@ local primitive_mt = {
   end
 }
 
-local function newprimitive(name)
+local function newprimitive(name, bitwidthln)
   return setmetatable(
     {
       id = hashing.hash{primitive_schema_hash, name},
       name = name,
+      bitwidthln = bitwidthln,
     }, primitive_mt)
 end
 
@@ -592,7 +609,9 @@ local function newgeneric(kind)
   return setmetatable({kind=kind}, generic_mt)
 end
 
-local exports = {
+local primitives = {}
+
+return {
   list = newgeneric("list"),
   maybe = newgeneric("maybe"),
   text = text,
@@ -601,15 +620,18 @@ local exports = {
   method = method,
   variant = variant,
   newschema = newschema,
+  primitives = primitives,
+  void = newprimitive("void", nil),
+  bottom = newprimitive("bottom", nil),
+  bool = newprimitive("bool", 0),
+  u8 = newprimitive("u8", 3),
+  i8 = newprimitive("i8", 3),
+  u16 = newprimitive("u16", 4),
+  i16 = newprimitive("i16", 4),
+  u32 = newprimitive("u32", 5),
+  i32 = newprimitive("i32", 5),
+  u64 = newprimitive("u64", 6),
+  i64 = newprimitive("i64", 6),
+  float = newprimitive("float", 5),
+  double = newprimitive("double", 6),
 }
-local prims = {
-  "u8", "u16", "u32", "u64",
-  "i8", "i16", "i32", "i64",
-  "float", "double", "bool",
-  "void", "bottom",
-}
-for i, prim in ipairs(prims) do
-  exports[prim] = newprimitive(prim)
-end
-
-return exports
