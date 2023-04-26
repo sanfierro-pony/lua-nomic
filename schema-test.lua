@@ -81,6 +81,7 @@ function testSchemaBootstrapFieldStruct()
     },
   }
 
+  printstruct(field)
   local fieldlayout = layout.layoutstruct(field)
   local cmpLayout = toComparableLayout(fieldlayout)
   lu.assertEquals(expectedLayout, cmpLayout)
@@ -187,6 +188,10 @@ function testEmptyUnionStruct()
   lu.assertEquals(parsed, {
     testunion = 0,
   })
+
+  local writer = cg:new():structwriter(fl)
+  local written = writer(parse)
+  p(written)
 end
 
 -- HACK: luaunit wants to find tests in globals and luvit doesn't run us with _ENV == _G

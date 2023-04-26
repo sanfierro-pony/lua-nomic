@@ -41,7 +41,6 @@ local struct_mt = {
       return newunion(self, #self.fields, enum)
     end,
     addunionfield = function(self, name, stype, descriminator, descriminant, docstring, id)
-      print("struct_md:addunionfield", name, stype, descriminator, descriminant)
       assert(type(name) == "string", "the name of the field must be a string")
       assert(is_schematype(stype), "the type of the field must be a schema type")
       assert(type(descriminator) == "number", "union specifier must be present")
@@ -121,7 +120,6 @@ end
 local variant_mt = {
   __index = {
     addfield = function(self, name, stype, docstring, id)
-      print("variant_mt:addfield", name, stype)
       assert(type(name) == "string", "the name of the field must be a string")
       if not is_schematype(stype) then
         if p then
@@ -133,7 +131,6 @@ local variant_mt = {
         error "the docstring must be a string if present"
       end
       if self.descpos == nil or self.descval == nil then
-        (p or print)("variant_mt:addfield descpos descval self ", self.descpos, self.descval, self)
         error "BUG: missing descpos or descval?"
       end
       return (self.parent.parent:addunionfield(name, stype, self.descpos, self.descval, docstring, id))
@@ -145,7 +142,6 @@ local variant_mt = {
       end
       local enum = newenum(name, docstring, id)
       self:addfield(name, enum, docstring, id)
-      p("variant_mt:addunion", self)
       return newunion(self, #self.parent.parent.fields, enum)
     end,
     addunionfield = function(self, name, stype, descpos, descval, docstring, id)
@@ -184,7 +180,6 @@ local enum_mt = {
       if not id then
         id = hashing.hash{self.id, name}
       end
-      print ("enum_mt:addvariant", name, #self.variants)
       local variantindex = #self.variants -- zero indexed, first variant needs to have index 0 to match capnp
       self.variants[#self.variants + 1] = {name = name, docstring = docstring, id = id, variantindex = variantindex}
       return variantindex
@@ -266,7 +261,6 @@ local add_struct_mt = {
     elseif type(val) == "table" then
       local struct = self.context:addstruct(self.name, self.docstring)
       struct:define(val)
-      p(struct)
       return struct
     end
     return self

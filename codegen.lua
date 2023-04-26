@@ -30,6 +30,37 @@ else]],
   novariant = "if true then",
 }
 
+local writer_gen = acg.generator {
+   block = [[
+return function (prims)
+  local function write_struct(buf, structoffset, datalength, ptrlength)
+    error("TODO: implement wrter_gen correctly")
+    local result = {}
+    $(
+    )fields
+    return result
+  end
+  return write_struct
+end
+]],
+  field = "result.$fieldname = $readermethod(buf, structoffset, datalength, $fieldoffset, $default)",
+  union = [[
+    local $fieldname = $readermethod(buf, structoffset, datalength, $fieldoffset, $default)
+    $variants
+    result.$fieldname = $fieldname
+  ]],
+  variants = [[
+    $()variants
+  end
+]],
+  variant = [[if $unionname == $discriminant then
+$unionname = $name
+    $(
+)fields
+else]],
+  novariant = "if true then",
+}
+
 local canffi, ffi = pcall(require, 'ffi')
 ffi = canffi and ffi or nil
 local primitives = canffi and require'primitives.primitives-ffi' or require'primitives.primitives'
@@ -37,7 +68,7 @@ local primitives = canffi and require'primitives.primitives-ffi' or require'prim
 local codegen = {}
 
 function codegen:new()
-  return setmetatable({structreaders = {}}, {__index = codegen})
+  return setmetatable({structreaders = {}, structwriters = {}}, {__index = codegen})
 end
 
 local function readermethod(ty)
@@ -59,11 +90,7 @@ local function setfieldinfo(packed, field)
   return packed
 end
 
-function codegen:structreader(layout)
-  assert(layout.id ~= nil, "codegen:structreader: layout.id must be set")
-  if self.structreaders[layout.id] then
-    return self.structreaders[layout.id]
-  end
+function codegen:structtree(layout)
   local fields = {}
   local enums = {}
   local unionfields = {}
@@ -81,19 +108,11 @@ function codegen:structreader(layout)
       fields[#fields + 1] = setfieldinfo({kind = "field"}, field)
     end
   end
-  p("unions", unionfields)
-  local function buildfield(field)
-      unionfields[field.discriminator] = uf
-      currentfield = setfieldinfo({kind = "field"}, field)
-      currentfield.discriminator, currentfield.discriminant = field.discriminator, field.discriminant
-      currentfield.kind = "unionfield"
-  end
   -- enum or union, if is used as discriminator will be unionfields entries matching
   local function buildenumfield(union)
     local variants = {}
     for _, tv in pairs(union.type.variants) do
       local uf = unionfields[union.offset .. ':' .. tv.variantindex]
-      p(union.offset .. ':' .. tv.variantindex, uf)
       local fields = {}
       if uf then
         for _, field in ipairs(uf) do
@@ -112,7 +131,6 @@ function codegen:structreader(layout)
         fields = fields,
       }
     end
-    p(variants)
     return setfieldinfo(
       {
         kind = "union",
@@ -122,13 +140,36 @@ function codegen:structreader(layout)
   for i, union in ipairs(enums) do
     fields[#fields + 1] = buildenumfield(union)
   end
-  local code = parser_gen {
+  return {
     kind = "block",
     fields = fields,
   }
-  print(code)
+end
+
+function codegen:structreader(layout)
+  assert(layout.id ~= nil, "codegen:structreader: layout.id must be set")
+  if self.structreaders[layout.id] then
+    return self.structreaders[layout.id]
+  end
+  local code = parser_gen(self:structtree(layout))
   local result = assert(load(code, "codegen:structreader"..layout.id))()(primitives)
+  assert(result ~= nil, "codegen:structreader: result is nil")
+  assert(type(result) == "function", "codegen:structreader: result is not a function")
   self.structreaders[layout.id] = result
+  return result
+end
+
+function codegen:structwriter(layout)
+  assert(layout.id ~= nil, "codegen:structwriter: layout.id must be set")
+  if self.structwriters[layout.id] then
+    return self.structwriters[layout.id]
+  end
+  local code = writer_gen(self:structtree(layout))
+  print(code)
+  local result = assert(load(code, "codegen:structwriter"..layout.id))()(primitives)
+  assert(result ~= nil, "codegen:structwriter: result is nil")
+  assert(type(result) == "function", "codegen:structwriter: result is not a function")
+  self.structwriters[layout.id] = result
   return result
 end
 

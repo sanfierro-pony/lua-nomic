@@ -22,6 +22,8 @@ local charbuf = typeof("char *")
 local xorBuf = ffi.new("uint8_t[?]", 8)
 local emptyBuf = ffi.new("uint8_t[?]", 8)
 
+-- FIXME: when buf is a ctype buf we don't know the length -> need to add that for proper bounds checking
+
 local function readVal(ty, numBytes, buf, structOffset, structLength, fieldOffset, defaultXorBuf)
   if type(buf) == 'string' then
     buf = ffi.cast(charbuf, buf)

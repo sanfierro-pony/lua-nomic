@@ -12,18 +12,12 @@ local pow = math.pow or require "primitives.polyfill.math_pow"
 local pointers = require "primitives.primitives-pointer"
 local band = bit and bit.band
 
+-- if we have math.type we have a lua that has separate int and float types
+-- if type(large int) is 'integer' then we have at least 64 bit int
+-- if it's 'float' we don't
 local hasInt64 = math.type and math.type(922337203685480000) == 'integer' or false
 
 local WORD_SIZE_BYTES = 8
-
--- every function in this file takes offsets 1-indexed because lua!
-
--- bool - readBool
--- (u)int8-32 - readLuaInt
--- (u)int64 - readBigInt64
--- float/double - readFp
-
--- FIXME: the length checks in various functions are equivalent to != 1
 
 
 local function toHex(str)
@@ -237,15 +231,22 @@ local primitives = {
   readbool = readBool,
   readi8 = function(...) return readLuaInt(1, true, ...) end,
   readu8 = function(...) return readLuaInt(1, false, ...) end,
-
   readi16 = function(...) return readLuaInt(2, true, ...) end,
   readu16 = function(...) return readLuaInt(2, false, ...) end,
-
   readi32 = function(...) return readLuaInt(4, true, ...) end,
   readu32 = function(...) return readLuaInt(4, false, ...) end,
-
   readi64 = function(...) return readLuaInt(8, true, ...) end,
   readu64 = function(...) return readLuaInt(8, false, ...) end,
+
+  packbool = packBool,
+  packi8 = function(...) return packLuaInt(1, true, ...) end,
+  packu8 = function(...) return packLuaInt(1, false, ...) end,
+  packi16 = function(...) return packLuaInt(2, true, ...) end,
+  packu16 = function(...) return packLuaInt(2, false, ...) end,
+  packi32 = function(...) return packLuaInt(4, true, ...) end,
+  packu32 = function(...) return packLuaInt(4, false, ...) end,
+  packi64 = function(...) return packLuaInt(8, true, ...) end,
+  packu64 = function(...) return packLuaInt(8, false, ...) end,
 
   readBool = readBool,
   readInt8 = function(...) return readLuaInt(1, ...) end,
