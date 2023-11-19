@@ -34,7 +34,6 @@ local writer_gen = acg.generator {
    block = [[
 return function (prims)
   local function write_struct(buf, structoffset, datalength, ptrlength)
-    error("TODO: implement wrter_gen correctly")
     local result = {}
     $(
     )fields
@@ -43,7 +42,7 @@ return function (prims)
   return write_struct
 end
 ]],
-  field = "result.$fieldname = $readermethod(buf, structoffset, datalength, $fieldoffset, $default)",
+  field = "$writermethod(buf, structoffset, datalength, $fieldoffset, $default)",
   union = [[
     local $fieldname = $readermethod(buf, structoffset, datalength, $fieldoffset, $default)
     $variants
@@ -82,8 +81,21 @@ local function readermethod(ty)
   error("not sure how to read " .. ty.kind)
 end
 
+local function writermethod(ty)
+  if ty.kind == "primitive" then
+    return "prims.write" .. ty.name
+  end
+  if ty.kind == "enum" then
+    -- discriminator is initially read as u16 and converted to friendly name if one matches
+    return "prims.writeu16"
+  end
+  error("not sure how to write " .. ty.kind)
+end
+
 local function setfieldinfo(packed, field)
   packed.readermethod = readermethod(field.type)
+  packed.writermethod = writermethod(field.type)
+  -- FIXME: handle bools separately to group into bools within same u8
   packed.fieldoffset = field.offset
   packed.default = field.default
   packed.fieldname = field.name
@@ -159,12 +171,15 @@ function codegen:structreader(layout)
   return result
 end
 
+-- FIXME: writer needs a different implementation for non-ffi, currently it assumes we have ffi available (luvit)
+-- and can't use the primitives.lua impl
 function codegen:structwriter(layout)
   assert(layout.id ~= nil, "codegen:structwriter: layout.id must be set")
   if self.structwriters[layout.id] then
     return self.structwriters[layout.id]
   end
   local code = writer_gen(self:structtree(layout))
+  print("")
   print(code)
   local result = assert(load(code, "codegen:structwriter"..layout.id))()(primitives)
   assert(result ~= nil, "codegen:structwriter: result is nil")

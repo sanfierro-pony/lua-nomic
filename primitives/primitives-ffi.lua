@@ -103,10 +103,16 @@ local function readbool(buf, structOffset, structLength, fieldOffset, defaultIsT
     val = not val
   end
   return val
+
 end
+
 
 local pffi = {
   readbool = readbool,
+-- FIXME: we can't expose writebool and have it make sense
+-- need to pack blocks of bools which are in the same u8
+-- and then use writeu8
+  -- writebool = writebool,
   readi8 = function(...) return readVal(int8, 1, ...) end,
   writei8 = function(...) return writeVal(int8, 1, ...) end,
   readu8 = function(...) return readVal(uint8, 1, ...) end,
