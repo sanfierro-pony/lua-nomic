@@ -1,1 +1,6 @@
-/.direnv
+/.vscode
+lit.exe
+luvi.exe
+luvit.exe
+/deps/
+.direnv/
