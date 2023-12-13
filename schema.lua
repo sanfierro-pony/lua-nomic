@@ -1,5 +1,5 @@
-
 local hashing = require "schema-hash"
+local u64compat = require "primitives.primitives-u64"
 
 local newstruct, newenum, newunion, newvariant, newinterface
 
@@ -23,7 +23,7 @@ local struct_mt = {
         error "the docstring must be a string if present"
       end
       if not id then
-        id = hashing.hash{self.id, name}
+        id = u64compat(hashing.hash{self.id, name})
       end
 
       local field = {kind = "field", name = name, type = stype, docstring = docstring, id = id}
@@ -49,7 +49,7 @@ local struct_mt = {
         error "the docstring must be a string if present"
       end
       if not id then
-        id = hashing.hash{self.id, name}
+        id = u64compat(hashing.hash{self.id, name})
       end
 
       local field = {kind = "union", name = name, type = stype, docstring = docstring, descriminator = descriminator, descriminant = descriminant, id = id}
@@ -74,9 +74,14 @@ local struct_mt = {
 }
 
 function newstruct(name, docstring, id)
-  assert(type(name) == "string", "the name of the struct must be a string")
+  if type(name) ~= "string" then
+    error "the name of the struct must be a string"
+  end
   if docstring ~= nil and type(docstring) ~= "string" then
     error "the docstring must be a string if present"
+  end
+  if not u64compat.isU64(id) then
+    error "id must be a u64"
   end
   local self = {
     name = name,
@@ -95,10 +100,13 @@ local union_mt = {
   __index = {
     addvariant = function(self, name, docstring, id)
       if not id then
-        id = hashing.hash{self.id, name}
+        id = u64compat(hashing.hash{self.id, name})
       end
       assert(type(name) == "string", "name must be a string")
       assert(self.descpos ~= nil, "descpos must be set")
+      if not u64compat.isU64(id) then
+        error "id must be a u64"
+      end
       local descval = self.enum:addvariant(name, docstring, id)
       assert(descval ~= nil, "descval must be set")
       return newvariant(self, self.descpos, descval)
@@ -159,6 +167,9 @@ local variant_mt = {
 function newvariant(parent, descpos, descval, id)
   assert(descpos ~= nil, "descpos must be set")
   assert(descval ~= nil, "descval must be set")
+  if id ~= nil and not u64compat.isU64(id) then
+    error "id must be a u64"
+  end
   local self = {
     parent = parent,
     -- name = name,
@@ -178,7 +189,10 @@ local enum_mt = {
         error "the docstring must be a string if present"
       end
       if not id then
-        id = hashing.hash{self.id, name}
+        id = u64compat(hashing.hash{self.id, name})
+      end
+      if not u64compat.isU64(id) then
+        error "id must be a u64"
       end
       local variantindex = #self.variants -- zero indexed, first variant needs to have index 0 to match capnp
       self.variants[#self.variants + 1] = {name = name, docstring = docstring, id = id, variantindex = variantindex}
@@ -191,6 +205,9 @@ local enum_mt = {
 }
 
 function newenum(name, docstring, id)
+  if id ~= nil and not u64compat.isU64(id) then
+    error "id must be a u64"
+  end
   local self = {
     name = name,
     docstring = docstring,
@@ -214,6 +231,9 @@ local newtype_mt = {
 }
 
 function newnewtype(name, basetype, docstring, id)
+  if not u64compat.isU64(id) then
+    error "id must be a u64"
+  end
   local self = {
     name = name,
     kind = "newtype",
@@ -232,7 +252,10 @@ local interface_mt = {
         error "the docstring must be a string if present"
       end
       if not id then
-        id = hashing.hash{self.id, name}
+        id = u64compat(hashing.hash{self.id, name})
+      end
+      if not u64compat.isU64(id) then
+        error "id must be a u64"
       end
       -- TODO
     end
@@ -246,6 +269,9 @@ function newinterface(name, docstring, id)
     error "the docstring must be a string if present"
   end
   assert(id, "when creating a type outside the context of a schema it must have an id specified")
+  if not u64compat.isU64(id) then
+    error "id must be a u64"
+  end
   local self = {
     name = name,
     docstring = docstring,
@@ -320,7 +346,7 @@ local schema_mt = {
         error "the docstring must be a string if present"
       end
       if not id then
-        id = hashing.hash{self.id, name}
+        id = u64compat(hashing.hash{self.id, name})
       end
       local struct = newstruct(name, docstring, id)
       self.exports[#self.exports + 1] = struct
@@ -333,7 +359,7 @@ local schema_mt = {
         error "the docstring must be a string if present"
       end
       if not id then
-        id = hashing.hash{self.id, name}
+        id = u64compat(hashing.hash{self.id, name})
       end
       local t = newenum(name, docstring, id)
       self.exports[#self.exports + 1] = t
@@ -346,7 +372,7 @@ local schema_mt = {
         error "the docstring must be a string if present"
       end
       if not id then
-        id = hashing.hash{self.id, name}
+        id = u64compat(hashing.hash{self.id, name})
       end
       local struct = newinterface(name, docstring, id)
       self.exports[#self.exports + 1] = struct
@@ -359,7 +385,7 @@ local schema_mt = {
         error "the docstring must be a string if present"
       end
       if not id then
-        id = hashing.hash{self.id, name}
+        id = u64compat(hashing.hash{self.id, name})
       end
       local t = newnewtype(name, basetype, docstring, id)
       self.exports[#self.exports + 1] = t
@@ -550,11 +576,14 @@ local function declare()
   return {}
 end
 
-local function newschema(name, description, id)
+local function newschema(name, docstring, id)
   assert(type(name) == "string", "name must be a string")
+  if not u64compat.isU64(id) then
+    error "id must be a u64"
+  end
   local init = {
     name = name,
-    description = description,
+    docstring = docstring,
     id = id,
     exports = {},
     export = {},
@@ -574,7 +603,7 @@ local primitive_mt = {
 local function newprimitive(name, bitwidthln)
   return setmetatable(
     {
-      id = hashing.hash{primitive_schema_hash, name},
+      id = u64compat(hashing.hash{primitive_schema_hash, name}),
       name = name,
       bitwidthln = bitwidthln,
     }, primitive_mt)

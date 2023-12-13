@@ -9,6 +9,7 @@ local hashHexChars = hashBytes * 2
 
 -- generates a random hash
 -- math.randomseed should be called before this is used for the first time
+---@return string
 local function randomHash()
   local partialHash = hashFunc()
   partialHash = partialHash(tostring(math.random(uint32_max)))
@@ -17,6 +18,7 @@ local function randomHash()
 end
 
 -- hash of every item in input sequence
+---@return string
 local function hash(t)
   if type(t) ~= "table" or #t == 0 then
     error("hash(): input should be a list with at least one item")

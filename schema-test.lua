@@ -9,7 +9,7 @@ local text, union, enum, variant = schema.text, schema.union, schema.enum, schem
 local u16, u32, u64, list = schema.u16, schema.u32, schema.u64, schema.list
 local bool = schema.bool
 
-local S = schema.newschema("schema", "the schema for saving and transmitting schemas", "a3329f307fcd88f6")
+local S = schema.newschema("schema", "the schema for saving and transmitting schemas", 0xa3329f307fcd88f6)
 
 local stype = S:addstruct("type", "the type that a field may have")
 local struct = S:addstruct("struct", "a structure containing named fields")

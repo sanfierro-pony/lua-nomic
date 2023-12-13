@@ -1,16 +1,17 @@
-local success, bit, bxor, ffi, bint64
+local success, bit, bxor, ffi
 success, bit  = pcall(require, "bit")
 bit = success and bit or require "primitives.polyfill.bit"
 bxor = bit.bxor
 success, ffi = pcall(require, "ffi")
 ffi = success and ffi or nil
 
-success, bint64 = pcall(require, "bint")
-bint64 = success and bint64(64) or nil
+local bint64 = (require "bint")(64)
 
 local pow = math.pow or require "primitives.polyfill.math_pow"
 local pointers = require "primitives.primitives-pointer"
 local band = bit and bit.band
+
+local stringBuffer = require "primitives.string-buffer"
 
 -- if we have math.type we have a lua that has separate int and float types
 -- if type(large int) is 'integer' then we have at least 64 bit int
@@ -24,43 +25,42 @@ local function toHex(str)
   return (str:gsub(".", function(char) return string.format("%02x", char:byte()) end))
 end
 
-
-local function xorBufPart(buf, offset, length, defaultBuf)
-  if defaultBuf == nil then
-    return  string.sub(buf, offset, offset + length - 1)
-  end
-  local bufPart = ""
+local function xorDefault(buf, offset, defaultBuf)
+  local bufPart = stringBuffer.createStringBuffer()
   for i = 1, #defaultBuf do
     local first, second = string.byte(buf:sub(offset + i - 1, offset + i - 1)), string.byte(defaultBuf:sub(i, i))
-    bufPart = bufPart .. string.char(bxor(first, second))
+    bufPart:append(string.char(bxor(first, second)))
   end
-  return bufPart
+  return bufPart:toString()
 end
 
-local function readPointer(buf, pointerOffset)
-  local lsw, msw, _ = string.unpack("<I2", buf:sub(pointerOffset + 1, pointerOffset + 1 + 8))
-  return pointers.readPointer(lsw, msw)
+-- Read a value from `buf`, xor'ing with `defaultBuf` to retrieve the original value buffer.
+---@param buf string the buffer to read from
+---@param offset integer the offset into the buffer to start at
+---@param length integer the length of the value buffer
+---@param defaultBuf string|nil the default value buffer
+local function readValue(buf, offset, length, defaultBuf)
+  if defaultBuf == nil then
+    return string.sub(buf, offset, offset + length - 1)
+  end
+  return xorDefault(buf, offset, defaultBuf)
 end
 
--- this function is special and takes offset and length in bits
-local function readBool(buf, structOffset, structLength, fieldOffset, default)
-  structOffset, structLength = structOffset * WORD_SIZE_BYTES, structLength * WORD_SIZE_BYTES
-  local start = math.floor(fieldOffset / 8)
-  if start >= structLength then
-    error("readBool: fieldOffset > structLength")
+-- Append the value given in `valBuf` to `buf`, xor'd with `defaultBuf`
+---@param buf StringBuffer buffer to append to
+---@param valBuf string value to append
+---@param reservation SlotReservation|nil reservation in buffer for this field, if any
+---@param defaultBuf string|nil buffer with default value for this field
+local function appendValueXorDefault(buf, valBuf, reservation, defaultBuf)
+  if defaultBuf ~= nil then
+    valBuf = xorDefault(valBuf, 1, defaultBuf)
   end
-  local val, _ = string.unpack("<I1", buf:sub(structOffset + start + 1, structOffset + start + 1))
-  val = band(val, pow(2, fieldOffset % 8))
-  val = val ~= 0
-  if default then
-    val = not val
+  if reservation ~= nil then
+    buf:fill(reservation, valBuf)
+  else
+    buf:append(valBuf)
   end
-  return val
 end
-
--- Not used - codegen is responsible for this as it gets fiddly otherwise as
--- there are multiple bools per byte
--- function packBool()
 
 local function checkFieldIsWithinStruct(structLength, fieldOffset, numBytes)
   if fieldOffset * numBytes >= structLength then
@@ -74,13 +74,13 @@ local function checkFieldIsWithinStruct(structLength, fieldOffset, numBytes)
   return true
 end
 
--- numBytes = byte width of int type
--- signed = whether int is signed or unsigned
--- buf = buffer we're decoding from (as lua string)
--- structOffset - offset into buf struct starts at (64bit aligned)
--- structLength - length of struct (64bit aligned)
--- (offset and length = capnproto pointer which is both ptr + length?)
--- defaultBuf = buffer with default value for this field (can pass nil instead of all zeroes if default is zeroes)
+---@param numBytes integer byte width of int type
+---@param signed boolean whether int is signed or unsigned
+---@param buf string buffer we're decoding from
+---@param structOffset integer offset into buf struct starts at (64bit aligned)
+---@param structLength integer length of struct (64bit aligned)
+---@param fieldOffset integer (offset and length = capnproto pointer which is both ptr + length?)
+---@param defaultBuf string|nil buffer with default value for this field (can pass nil instead of all zeroes if default is zeroes)
 local function readLuaInt(numBytes, signed, buf, structOffset, structLength, fieldOffset, defaultBuf)
   -- pile of preconditions
   if numBytes > (hasInt64 and 8 or 4) then
@@ -98,19 +98,61 @@ local function readLuaInt(numBytes, signed, buf, structOffset, structLength, fie
     val, _ = string.unpack(unpackFmt, defaultBuf)
     return val
   end
-  local bufPart = xorBufPart(buf, structOffset + fieldOffset * numBytes + 1, numBytes, defaultBuf)
+  local bufPart = readValue(buf, structOffset + fieldOffset * numBytes + 1, numBytes, defaultBuf)
   val, _ = string.unpack(unpackFmt, bufPart)
   return val
 end
 
-local function packLuaInt(numBytes, val, signed, defaultBuf)
+---@param numBytes integer byte width of int type
+---@param signed boolean whether int is signed or unsigned
+---@param val integer value to append
+---@param buf StringBuffer buffer to append to
+---@param reservation SlotReservation|nil reservation in buffer for this field, if any
+---@param defaultBuf string|nil buffer with default value for this field (can pass nil instead of all zeroes if default is zeroes)
+local function packLuaInt(numBytes, signed, val, buf, reservation, defaultBuf)
   if type(val) ~= 'number' then
     error("packLuaInt: val must be a number")
   end
   local result = string.pack("<" .. (signed and 'i' or 'I') .. tostring(numBytes), val)
-  return xorBufPart(result, 1, numBytes, defaultBuf)
+  appendValueXorDefault(buf, result, reservation, defaultBuf)
 end
 
+-- Read a series of bools from a single u8
+---@param buf string buffer we're decoding from
+---@param structOffset integer offset into buf struct starts at (64bit aligned)
+---@param structLength integer length of struct (64bit aligned)
+---@param fieldOffset integer (offset and length = capnproto pointer which is both ptr + length?)
+---@param default integer packed default of all bools in this u8
+local function readBools(buf, structOffset, structLength, fieldOffset, default)
+  local val = readLuaInt(1, false, buf, structOffset, structLength, fieldOffset, string.char(default))
+  local result = {}
+  for i = 0, 7 do
+    result[i + 1] = band(val, pow(2, i)) ~= 0
+  end
+  return result
+end
+
+-- Write a series of bools to a single u8
+---@param bools boolean[] array of bools to append
+---@param buf StringBuffer buffer to append to
+---@param reservation SlotReservation|nil reservation in buffer for this field, if any
+---@param default integer packed default of all bools in this u8
+local function packBools(bools, buf, reservation, default)
+  local val = 0
+  for i = 1, #bools do
+    if bools[i] then
+      val = val + pow(2, i - 1)
+    end
+  end
+  packLuaInt(1, false, val, buf, reservation, string.char(default))
+end
+
+---@param isDouble boolean true if double, false if float
+---@param buf string buffer we're decoding from
+---@param structOffset integer offset into buf struct starts at (64bit aligned)
+---@param structLength integer length of struct (64bit aligned)
+---@param fieldOffset integer (offset and length = capnproto pointer which is both ptr + length?)
+---@param defaultBuf string|nil buffer with default value for this field (can pass nil instead of all zeroes if default is zeroes)
 local function readFp(isDouble, buf, structOffset, structLength, fieldOffset, defaultBuf)
   local numBytes = isDouble and 8 or 4
   structOffset, structLength = structOffset * WORD_SIZE_BYTES, structLength * WORD_SIZE_BYTES
@@ -124,143 +166,132 @@ local function readFp(isDouble, buf, structOffset, structLength, fieldOffset, de
     val, _ = string.unpack(unpackFmt, defaultBuf)
     return val
   end
-  local bufPart = xorBufPart(buf, structOffset + fieldOffset * numBytes + 1, numBytes, defaultBuf)
+  local bufPart = readValue(buf, structOffset + fieldOffset * numBytes + 1, numBytes, defaultBuf)
   val, _ = string.unpack(unpackFmt, bufPart)
   return val
 end
 
-local function packFp(isDouble, val, defaultBuf)
+---@param isDouble boolean true if double, false if float
+---@param val number value to append
+---@param buf StringBuffer buffer to append to
+---@param reservation SlotReservation|nil reservation in buffer for this field, if any
+---@param defaultBuf string|nil buffer with default value for this field (can pass nil instead of all zeroes if default is zeroes)
+local function packFp(isDouble, val, buf, reservation, defaultBuf)
   if type(val) ~= 'number' then
     error("packFp: val must be a number")
   end
   local result = string.pack("<" .. (isDouble and 'd' or 'f'), val)
-  return xorBufPart(result, 1, (isDouble and 8 or 4), defaultBuf)
+  appendValueXorDefault(buf, result, reservation, defaultBuf)
 end
 
-local function partsToBigInt64(_signed, lsw, msw)
+local function partsToBigInt64(lsw, msw)
   local result = bint64.new(msw)
   result = bint64.__shl(result, 32)
   result = result + lsw
-  -- TODO: do something about signedness? would need to specialize a signed and unsigned bint
-  -- type so tostring and some other ops default to right thing
   return result
 end
 
 local function bigInt64ToParts(val)
   return val[1], val[2]
-  -- lsw = bint64.__shr(val, 32)
-  -- msw = bint64.sub(val, right)
-  -- return bint64.tointeger(lsw), bint64.tointeger(msw)
 end
 
--- signed = whether int is signed or unsigned
--- buf = buffer we're decoding from (as lua string)
--- structOffset - beginning of struct in buf (* WORD_SIZE for bytes)
--- structLength - length of struct in buf (* WORD_SIZE for bytes)
--- fieldOffset - offset of field in struct, in field's alignment
--- defaultBuf = buffer with default value for this field (can pass nil instead of all zeroes if default is zeroes)
+---@param signed boolean whether int is signed or unsigned
+---@param buf string buffer we're decoding from
+---@param structOffset integer offset into buf struct starts at (64bit aligned)
+---@param structLength integer length of struct (64bit aligned)
+---@param fieldOffset integer (offset and length = capnproto pointer which is both ptr + length?)
+---@param defaultBuf string|nil buffer with default value for this field (can pass nil instead of all zeroes if default is zeroes)
 local function readBigInt64(signed, buf, structOffset, structLength, fieldOffset, defaultBuf)
   structOffset, structLength = structOffset * WORD_SIZE_BYTES, structLength * WORD_SIZE_BYTES
   -- pile of preconditions
   local first, second, _
   local numBytes = 8
-  local unpackFmt = "<" .. "I4I4"
+  local unpackFmt = "<I4" .. (signed and 'i' or 'I') .. "4"
   if not checkFieldIsWithinStruct(structLength, fieldOffset, numBytes) then
     -- entirely outside the range so load the default
     if defaultBuf == nil then
       return 0
     end
     first, second, _ = string.unpack(unpackFmt, defaultBuf)
-    return partsToBigInt64(signed, first, second)
+    return partsToBigInt64(first, second)
   end
-  local bufPart = xorBufPart(buf, structOffset + fieldOffset * numBytes + 1, numBytes, defaultBuf)
+  local bufPart = readValue(buf, structOffset + fieldOffset * numBytes + 1, numBytes, defaultBuf)
   first, second, _ = string.unpack(unpackFmt, bufPart)
-  return partsToBigInt64(signed, first, second)
+  return partsToBigInt64(first, second)
 end
 
-local ffi_ll = ffi and ffi.typeof("int64_t *")
-local ffi_ull = ffi and ffi.typeof("uint64_t *")
-local ffi_const_str = ffi and ffi.typeof("const char *")
-local ffi_temp_buf = ffi and ffi.new("uint64_t[?]", 1)
-
-local function readLongLong(signed, buf, structOffset, structLength, fieldOffset, defaultBuf)
-  structOffset, structLength = structOffset * WORD_SIZE_BYTES, structLength * WORD_SIZE_BYTES
-  -- pile of preconditions
-  local numBytes = 8
-  if not checkFieldIsWithinStruct(structLength, fieldOffset, numBytes) then
-    buf, defaultBuf = defaultBuf, nil
-    fieldOffset, structOffset = 0, 0
-  end
-
-  buf = ffi.cast(ffi_const_str, buf)
-
-  if defaultBuf ~= nil then
-    local tmpBuf = ffi.cast("char *", ffi_temp_buf)
-    for i = 0,7 do
-      tmpBuf[i] = bxor(buf[i], defaultBuf[i])
-    end
-    buf = tmpBuf
-  end
-
-  buf = ffi.cast(signed and ffi_ll or ffi_ull, buf + structOffset)
-  return buf[fieldOffset]
-end
-
-local function packLongLong(val, signed, defaultBuf)
-  local buf = ffi.cast(signed and ffi_ll or ffi_ull, ffi_temp_buf)
-  buf[0] = val
-  if defaultBuf ~= nil then
-    for i=0,7 do
-      buf[i] = bxor(buf[i], defaultBuf[i])
-    end
-  end
-  return ffi.string(buf, 8)
-end
-
-local function packBigInt64(val, _signed, defaultBuf)
+---@param signed boolean whether int is signed or unsigned
+---@param val integer value to append
+---@param buf StringBuffer buffer to append to
+---@param reservation SlotReservation|nil reservation in buffer for this field, if any
+---@param defaultBuf string|nil buffer with default value for this field (can pass nil instead of all zeroes if default is zeroes)
+local function packBigInt64(signed, val, buf, reservation, defaultBuf)
   -- FIXME: bint64 doesn't have an unsigned version
   if type(val) ~= 'number' and getmetatable(val) ~= bint64 then
-    error("packBigInt64: val must be a number or bint64, got", type(val))
+    error("packBigInt64: val must be a number or bint64, got " .. type(val))
   end
   local lsw, msw = bigInt64ToParts(val)
-  local result = string.pack("<I4I4", lsw, msw)
-  return xorBufPart(result, 1, 8, defaultBuf)
+  local result = string.pack("<I4" .. (signed and 'i' or 'I') .. "4", lsw, msw)
+  appendValueXorDefault(buf, result, reservation, defaultBuf)
+end
+
+---@param buf string buffer we're decoding from
+---@param structOffset integer offset into buf struct starts at (64bit aligned)
+---@param structLength integer length of struct (64bit aligned)
+---@param fieldOffset integer (offset and length = capnproto pointer which is both ptr + length?)
+---@param defaultBuf string|nil buffer with default value for this field (can pass nil instead of all zeroes if default is zeroes)
+---@return number lsw, number msw
+local function readPointer(buf, structOffset, structLength, fieldOffset, defaultBuf)
+  local bigPointer = readBigInt64(false, buf, structOffset, structLength, fieldOffset, defaultBuf)
+  return bigInt64ToParts(bigPointer)
+end
+
+---@param lsw number low 32 bits of pointer
+---@param msw number high 32 bits of pointer
+---@param buf StringBuffer buffer to append to
+---@param reservation SlotReservation|nil reservation in buffer for this field, if any
+---@param defaultBuf string|nil buffer with default value for this field (can pass nil instead of all zeroes if default is zeroes)
+local function packPointer(lsw, msw, buf, reservation, defaultBuf)
+  packBigInt64(false, partsToBigInt64(lsw, msw), buf, reservation, defaultBuf)
+end
+
+---@param existingLen number the byte length of the existing content, padding will be emitted to make this fit word alignment
+---@param buf StringBuffer buffer to append to
+local function packPadding(existingLen, buf)
+  local padding = (WORD_SIZE_BYTES - (existingLen % WORD_SIZE_BYTES)) % WORD_SIZE_BYTES
+  buf:append(string.rep("\0", padding))
 end
 
 local primitives = {
-  readbool = readBool,
+  createBuffer = stringBuffer.createStringBuffer,
+
+  readBools = readBools,
   readi8 = function(...) return readLuaInt(1, true, ...) end,
   readu8 = function(...) return readLuaInt(1, false, ...) end,
   readi16 = function(...) return readLuaInt(2, true, ...) end,
   readu16 = function(...) return readLuaInt(2, false, ...) end,
   readi32 = function(...) return readLuaInt(4, true, ...) end,
   readu32 = function(...) return readLuaInt(4, false, ...) end,
-  readi64 = function(...) return readLuaInt(8, true, ...) end,
-  readu64 = function(...) return readLuaInt(8, false, ...) end,
+  readi64 = function(...) return readBigInt64(true, ...) end,
+  readu64 = function(...) return readBigInt64(false, ...) end,
+  readPointer = readPointer,
 
-  packbool = packBool,
-  packi8 = function(...) return packLuaInt(1, true, ...) end,
-  packu8 = function(...) return packLuaInt(1, false, ...) end,
-  packi16 = function(...) return packLuaInt(2, true, ...) end,
-  packu16 = function(...) return packLuaInt(2, false, ...) end,
-  packi32 = function(...) return packLuaInt(4, true, ...) end,
-  packu32 = function(...) return packLuaInt(4, false, ...) end,
-  packi64 = function(...) return packLuaInt(8, true, ...) end,
-  packu64 = function(...) return packLuaInt(8, false, ...) end,
+  writeBools = packBools,
+  writei8 = function(...) return packLuaInt(1, true, ...) end,
+  writeu8 = function(...) return packLuaInt(1, false, ...) end,
+  writei16 = function(...) return packLuaInt(2, true, ...) end,
+  writeu16 = function(...) return packLuaInt(2, false, ...) end,
+  writei32 = function(...) return packLuaInt(4, true, ...) end,
+  writeu32 = function(...) return packLuaInt(4, false, ...) end,
+  writei64 = function(...) return packBigInt64(true, ...) end,
+  writeu64 = function(...) return packBigInt64(false, ...) end,
+  writePointer = packPointer,
+  writePadding = packPadding,
 
-  readBool = readBool,
-  readInt8 = function(...) return readLuaInt(1, ...) end,
-  readInt16 = function(...) return readLuaInt(2, ...) end,
-  readInt32 = function(...) return readLuaInt(4, ...) end,
-  readInt64 = ffi and readLongLong or (hasInt64 and function(...) return readLuaInt(8, ...) end or readBigInt64),
-  packInt8 = function(...) return packLuaInt(1, ...) end,
-  packInt16 = function(...) return packLuaInt(2, ...) end,
-  packInt32 = function(...) return packLuaInt(4, ...) end,
-  packInt64 = ffi and packLongLong or (hasInt64 and function(...) return packLuaInt(8, ...) end or packBigInt64),
   readFloat = function(...) return readFp(false, ...) end,
   readDouble = function(...) return readFp(true, ...) end,
-  packFloat = function(...) return packFp(false, ...) end,
-  packDouble = function(...) return packFp(true, ...) end,
+  writeFloat = function(...) return packFp(false, ...) end,
+  writeDouble = function(...) return packFp(true, ...) end,
 }
 
 -- FIXME: is there a lua property testing thing?
@@ -270,9 +301,9 @@ local function selfTest()
     assert(expected == actual, tostring(expected) .. "!=" .. tostring(actual))
   end
 
-  eq(0, primitives.readInt8(true, "\0", 0, 1, 0, "\0"))
-  eq(-1, primitives.readInt8(true, "\255", 0, 1, 0, "\0"))
-  eq(-1, primitives.readInt8(true, "\0", 0, 1, 0, "\255"))
+  eq(0, primitives.readi8("\0", 0, 1, 0, "\0"))
+  eq(-1, primitives.readi8("\255", 0, 1, 0, "\0"))
+  eq(-1, primitives.readi8("\0", 0, 1, 0, "\255"))
   eq(1, primitives.readInt64(false, "\1\0\0\0\0\0\0\0", 0, 1, 0, nil))
   eq(true, primitives.readBool("\1", 0, 1, 0, false))
   assert(false == primitives.readBool("\1", 0, 1, 0, true))
@@ -282,13 +313,33 @@ local function selfTest()
   assert(0 == primitives.readDouble("\0\0\0\0\0\0\0\0", 0, 1, 0, nil))
   assert(math.abs(primitives.readDouble("\xf3\x8e\x53\x74\x24\x97\xbf\x3f", 0, 1, 0, nil) - 0.1234) < 0.000000001)
 
-  assert("24b9fc3d" == toHex(packFp(false, 0.1234, nil)))
-  assert("f38e53742497bf3f" == toHex(packFp(true, 0.1234, nil)))
-  assert("7b" == toHex(packLuaInt(1, 123, true, nil)))
-  assert("d204" == toHex(packLuaInt(2, 1234, true, nil)))
-  assert("d2040000" == toHex(packLuaInt(4, 1234, true, nil)))
-  eq("d204000000000000", toHex(primitives.packInt64(1234, false, nil)))
-  assert("80" == toHex(packLuaInt(1, -128, true, nil)))
+  local buffer = primitives.createBuffer()
+  primitives.writeFloat(false, buffer, 0.1234, nil)
+  assert("24b9fc3d" == toHex(buffer:toString()))
+
+  buffer = primitives.createBuffer()
+  primitives.writeDouble(false, buffer, 0.1234, nil)
+  assert("f38e53742497bf3f" == toHex(buffer:toString()))
+
+  buffer = primitives.createBuffer()
+  primitives.writeu8(buffer, 123, nil)
+  assert("7b" == toHex(buffer:toString()))
+
+  buffer = primitives.createBuffer()
+  primitives.writeu16(buffer, 1234, nil)
+  assert("d204" == toHex(buffer:toString()))
+
+  buffer = primitives.createBuffer()
+  primitives.writeu32(buffer, 1234, nil)
+  assert("d2040000" == toHex(buffer:toString()))
+
+  buffer = primitives.createBuffer()
+  primitives.writeu64(buffer, 1234, nil)
+  eq("d204000000000000", toHex(buffer:toString()))
+
+  buffer = primitives.createBuffer()
+  primitives.writei8(buffer, -128, nil)
+  assert("80" == toHex(buffer:toString()))
 end
 
 selfTest()

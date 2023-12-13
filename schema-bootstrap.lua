@@ -1,21 +1,22 @@
 -- parse from schema, save to buf, read from buf, compare
 --
 local schema = require 'schema'
+local u64 = require 'primitives.primitives-u64'
 
 local text, union, enum, variant = schema.text, schema.union, schema.enum, schema.variant
 local maybe, method = schema.maybe, schema.method
-local bool, u8, u16, u64, list = schema.bool, schema.u8, schema.u16, schema.u64, schema.list
+local bool, u8, u16, list = schema.bool, schema.u8, schema.u16, schema.list
 
-local S = schema.newschema("schema", "the schema for saving and transmitting schemas", "a3329f307fcd88f6")
+local S = schema.newschema("schema", "the schema for saving and transmitting schemas", u64"a3329f307fcd88f6")
 
 local stype = S:addstruct("type", "the type that a field may have")
 local struct = S:addstruct("struct", "a structure containing named fields")
 local field = S:addstruct("field", "something in a structure where data can be stored")
 local senum = S:addstruct("enum", "a set of meaningful names which get stored as a single number")
 
-local typeid = S:newtype("typeid", u64)
-local schemaid = S:newtype("schemaid", u64)
-local fieldid = S:newtype("fieldid", u64)
+local typeid = S:newtype("typeid", schema.u64)
+local schemaid = S:newtype("schemaid", schema.u64)
+local fieldid = S:newtype("fieldid", schema.u64)
 
 field:define {
   text "name" (0) "the name of the field as it should be used to generate the keys of the table";
@@ -196,7 +197,7 @@ local schema_schema = S:struct "schema" "The entire schema which is being descri
 local demangled_type_id = S:addstruct("demangled_type_id", "The compound ID to identify an applied generic outside the context of a schema")
 
 demangled_type_id:define {
-  u64 "baseid" (0) "The id of the base type or generic";
+  schema.u64 "baseid" (0) "The id of the base type or generic";
   list(demangled_type_id) "args" (1) "The arguments to resolve the type fully";
 }
 

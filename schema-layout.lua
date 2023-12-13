@@ -78,10 +78,19 @@ local function ispointer(ty)
   return false
 end
 
+-- TODO more type detail
+---@class StructLayout
+---@field name string
+---@field id string
+---@field data table[]
+---@field datalength number
+---@field pointers table[]
+
 -- Same idea as https://github.com/capnproto/capnproto/blob/9b1acb2f642fef318576c10a215bf6590c77538b/c%2B%2B/src/capnp/compiler/node-translator.c%2B%2B#L49
 -- See docs there for why this works
 -- this function assumes struct.fields is already sorted in evolution order
 -- (schema does this)
+---@return StructLayout
 local function layoutstruct(struct)
   local h = holes:new()
   local words = 0
@@ -90,6 +99,7 @@ local function layoutstruct(struct)
   local hole
 
   local packed = {
+    name = struct.name,
     id = struct.id,
     data = {},
     pointers = {},
@@ -98,13 +108,23 @@ local function layoutstruct(struct)
 
   for idx, field in ipairs(struct.fields) do
     if ispointer(field.type) then
-      packed.pointers[#packed.pointers + 1] = {
+      local pointer = {
         name = field.name,
         ["type"] = field.type,
         offset = #packed.pointers,
         discriminator = field.descriminator,
         discriminant = field.descriminant,
       }
+      if field.type.kind == 'struct' then
+        pointer.layout = function ()
+          return layoutstruct(field.type)
+        end
+      elseif field.type.kind == 'list' and field.type.args[1].kind == 'struct' then
+        pointer.layout = function ()
+          return layoutstruct(field.type.args[1])
+        end
+      end
+      packed.pointers[#packed.pointers + 1] = pointer
     else
       local lnbitwidth, wordwidth = getwidth(field.type)
       if lnbitwidth == 6 then
@@ -137,6 +157,8 @@ local function layoutstruct(struct)
       packed_by_idx[idx] = packedfield
     end
   end
+
+  packed.datalength = words
 
   for _, field in ipairs(packed.data) do
     if field.discriminator then

@@ -17,16 +17,29 @@ local uint32  = typeof("uint32_t *")
 local uint64  = typeof("uint64_t *")
 local float32 = typeof("float *")
 local float64 = typeof("double *")
-local charbuf = typeof("char *")
+local charbuf = typeof("const char *")
 
 local xorBuf = ffi.new("uint8_t[?]", 8)
 local emptyBuf = ffi.new("uint8_t[?]", 8)
 
+local tunpack = table.unpack or unpack
+
 -- FIXME: when buf is a ctype buf we don't know the length -> need to add that for proper bounds checking
 
+---@param ty ffi.ctype* type to read
+---@param numBytes integer number of bytes to read
+---@param buf string|ffi.cdata* buffer we're decoding from
+---@param structOffset integer offset into buf struct starts at (64bit aligned)
+---@param structLength integer length of struct (64bit aligned)
+---@param fieldOffset integer (offset and length = capnproto pointer which is both ptr + length?)
+---@param defaultXorBuf string|ffi.cdata*|nil default value to xor with
+---@return number
 local function readVal(ty, numBytes, buf, structOffset, structLength, fieldOffset, defaultXorBuf)
   if type(buf) == 'string' then
     buf = ffi.cast(charbuf, buf)
+  end
+  if type(defaultXorBuf) == 'string' then
+    defaultXorBuf = ffi.cast(charbuf, defaultXorBuf)
   end
 
   structOffset, structLength = structOffset * WORD_SIZE, structLength * WORD_SIZE
@@ -72,20 +85,7 @@ local function readVal(ty, numBytes, buf, structOffset, structLength, fieldOffse
   return reader[0]
 end
 
-local function writeVal(ty, numBytes, val, buf, structOffset, structLength, fieldOffset, defaultXorBuf)
-  structOffset, structLength = structOffset * WORD_SIZE, structLength * WORD_SIZE
-
-  if fieldOffset >= structLength then
-    -- entirely outside struct, fail
-    error("writeVal: start of field is outside struct")
-  end
-  if (fieldOffset + 1) * numBytes > structLength then
-    -- partially outside struct, fail
-    error("writeVal: end of field is outside struct")
-  end
-
-
-  local writer = ffi.cast(ty, buf + structOffset + fieldOffset * numBytes)
+local function writeValToBuffer(writer, numBytes, val, defaultXorBuf)
   writer[0] = val
   if defaultXorBuf ~= nil then
     writer = ffi.cast(uint8, writer)
@@ -95,24 +95,120 @@ local function writeVal(ty, numBytes, val, buf, structOffset, structLength, fiel
   end
 end
 
-local function readbool(buf, structOffset, structLength, fieldOffset, defaultIsTrue)
-  -- p("readBool:", buf, structOffset, structLength, fieldOffset, defaultIsTrue)
-  local val = readVal(uint8, 1, buf, structOffset, structLength, math.floor(fieldOffset / 8))
-  val = bit.band(val, math.pow(2, fieldOffset % 8)) ~= 0
-  if defaultIsTrue then
-    val = not val
+---@param ty ffi.ctype* type to write
+---@param numBytes integer number of bytes to write
+---@param val number value to write
+---@param buf ByteBuffer buffer to write to
+---@param reservation SliceReservation|nil reservation to write to
+---@param defaultXorBuf string|ffi.cdata*|nil default value to xor with
+local function writeVal(ty, numBytes, val, buf, reservation, defaultXorBuf)
+  local slice
+  if reservation ~= nil then
+    slice = buf:fill(reservation)
+  else
+    slice = buf:write(numBytes)
   end
-  return val
-
+  writeValToBuffer(ffi.cast(ty, slice), numBytes, val, defaultXorBuf)
 end
 
+-- Read a series of bools from a single u8
+---@param buf string|ffi.cdata* buffer we're decoding from
+---@param structOffset integer offset into buf struct starts at (64bit aligned)
+---@param structLength integer length of struct (64bit aligned)
+---@param fieldOffset integer (offset and length = capnproto pointer which is both ptr + length?)
+---@param default integer packed default of all bools in this u8
+local function readBools(buf, structOffset, structLength, fieldOffset, default)
+  local writer = ffi.cast(uint8, xorBuf)
+  writer[0] = default
+  local val = readVal(uint8, 1, buf, structOffset, structLength, fieldOffset, xorBuf)
+  local result = {}
+  for i = 0, 7 do
+    result[i + 1] = bit.band(val, math.pow(2, i)) ~= 0
+  end
+  return tunpack(result)
+end
+
+-- Write a series of bools to a single u8
+---@param bools boolean[] array of bools to append
+---@param buf any buffer to append to
+---@param reservation SliceReservation|nil reservation to write to
+---@param default integer packed default of all bools in this u8
+local function writeBools(bools, buf, reservation, default)
+  if #bools > 8 then
+    error("writeBools: expected up to 8 bools")
+  end
+  local val = 0
+  for i = 1, #bools do
+    if bools[i] then
+      val = val + math.pow(2, i - 1)
+    end
+  end
+  local writer = ffi.cast(uint8, xorBuf)
+  writer[0] = default
+  writeVal(uint8, 1, val, buf, reservation, xorBuf)
+end
+
+---@param buf string|ffi.cdata* buffer we're decoding from
+---@param structOffset integer offset into buf struct starts at (64bit aligned)
+---@param structLength integer length of struct (64bit aligned)
+---@param fieldOffset integer (offset and length = capnproto pointer which is both ptr + length?)
+---@param defaultXorBuf string|ffi.cdata*|nil default value to xor with
+---@return number lsw, number msw
+local function readPointer(buf, structOffset, structLength, fieldOffset, defaultXorBuf)
+  local bigPointer = readVal(uint64, 8, buf, structOffset, structLength, fieldOffset, defaultXorBuf)
+  return bit.band(bigPointer, 0xFFFFFFFF), bit.rshift(bigPointer, 32)
+end
+
+---@param lsw number low 32 bits of pointer
+---@param msw number high 32 bits of pointer
+---@param buf ByteBuffer buffer to write to
+---@param reservation SliceReservation|nil reservation to write to
+---@param defaultXorBuf string|ffi.cdata*|nil default value to xor with
+local function writePointer(lsw, msw, buf, reservation, defaultXorBuf)
+  local bigPointer = bit.bor(bit.lshift(msw + 0ULL, 32), bit.band(lsw, 0xFFFFFFFF))
+  writeVal(uint64, 8, bigPointer, buf, reservation, defaultXorBuf)
+end
+
+---@param buf string|ffi.cdata* buffer we're decoding from
+---@param offset number offset into buf
+---@param length number length of bytes to read
+---@return string
+local function readBytes(buf, offset, length)
+  if type(buf) == 'string' then
+    buf = ffi.cast(charbuf, buf)
+  end
+  return ffi.string(buf + offset, length)
+end
+
+---@param bytes string bytes to write
+---@param buf ByteBuffer buffer to write to
+---@param reservation SliceReservation|nil reservation to write to
+local function writeBytes(bytes, buf, reservation)
+  local slice
+  if reservation ~= nil then
+    slice = buf:fill(reservation)
+  else
+    slice = buf:write(#bytes)
+  end
+  ffi.copy(slice, bytes, #bytes)
+end
+
+---@param existingLen number the byte length of the existing content, padding will be emitted to make this fit word alignment
+---@param buf ByteBuffer buffer to write to
+local function writePadding(existingLen, buf)
+  local padding = (WORD_SIZE - (existingLen % WORD_SIZE)) % WORD_SIZE
+  local slice = ffi.cast(uint8, buf:write(padding))
+  for i = 1, padding do
+    slice[i - 1] = 0
+  end
+end
 
 local pffi = {
-  readbool = readbool,
--- FIXME: we can't expose writebool and have it make sense
--- need to pack blocks of bools which are in the same u8
--- and then use writeu8
-  -- writebool = writebool,
+  createBuffer = require 'primitives.byte-buffer'.createByteBuffer,
+
+  readBools = readBools,
+  writeBools = writeBools,
+
   readi8 = function(...) return readVal(int8, 1, ...) end,
   writei8 = function(...) return writeVal(int8, 1, ...) end,
   readu8 = function(...) return readVal(uint8, 1, ...) end,
@@ -132,6 +228,14 @@ local pffi = {
   writei64 = function(...) return writeVal(int64, 8, ...) end,
   readu64 = function(...) return readVal(uint64, 8, ...) end,
   writeu64 = function(...) return writeVal(uint64, 8, ...) end,
+
+  readPointer = readPointer,
+  writePointer = writePointer,
+
+  readBytes = readBytes,
+  writeBytes = writeBytes,
+
+  writePadding = writePadding,
 
   readFloat = function(...) return readVal(float32, 4, ...) end,
   writeFloat = function(...) return writeVal(float32, 4, ...) end,
