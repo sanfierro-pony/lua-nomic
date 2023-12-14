@@ -129,9 +129,9 @@ end
   ]],
   boolfield = "struct.$fieldname",
   union = [[
-    local $fieldname = $writermethod(buf, structoffset, datalength, $fieldoffset, $default)
+    --TODO: writers do conversion
+    $writermethod($typeinfo, struct.$fieldname, buf, nil, $default)
     $variants
-    result.$fieldname = $fieldname
   ]],
   variants = [[
     $()variants
@@ -452,7 +452,12 @@ function codegen:structtree(layout)
   local pointervalues = {}
   local runtimedata = {
     layouts = {},
+    vindexes = {},
   }
+
+  for i, union in ipairs(enums) do
+    runtimedata.vindexes[u64compat.toHex(union.type.id)] = union.vindex
+  end
 
   for i, pointer in ipairs(layout.pointers) do
     pointers[#pointers+1] = {

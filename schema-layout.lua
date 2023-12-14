@@ -153,6 +153,13 @@ local function layoutstruct(struct)
         discriminator = field.descriminator,
         discriminant = field.descriminant,
       }
+      if field.type.kind == 'enum' then
+        local vindex = {}
+        for _, v in ipairs(field.type.variants) do
+          vindex[v.name] = v.variantindex
+        end
+        packedfield.vindex = vindex
+      end
       packed.data[#packed.data + 1] = packedfield
       packed_by_idx[idx] = packedfield
     end
