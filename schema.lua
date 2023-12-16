@@ -274,6 +274,7 @@ function newinterface(name, docstring, id)
   end
   local self = {
     name = name,
+    kind = "interface",
     docstring = docstring,
     id = id
   }

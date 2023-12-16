@@ -129,16 +129,14 @@ end
   ]],
   boolfield = "struct.$fieldname",
   union = [[
-    --TODO: writers do conversion
-    $writermethod($typeinfo, struct.$fieldname, buf, nil, $default)
+    $writermethod(struct.$fieldname, buf, nil, $default)
     $variants
   ]],
   variants = [[
     $()variants
   end
 ]],
-  variant = [[if $unionname == $discriminant then
-$unionname = $name
+  variant = [[if struct.$unionname == $name then
     $(
 )fields
 else]],
@@ -148,20 +146,26 @@ else]],
   ]],
   -- The code for writing the value of a pointer, if it is necessary, followed by filling in the pointer.
   pointervalue = [[
-    if buf.knownPointers[struct.$fieldname] then
-      pointerInfo = buf.knownPointers[struct.$fieldname]
-    else
+    if struct.$fieldname == nil then
       pointerInfo = {
-        kind = "$pointerkind"
+        kind = "null"
       }
+    else
+      if buf.knownPointers[struct.$fieldname] then
+        pointerInfo = buf.knownPointers[struct.$fieldname]
+      else
+        pointerInfo = {
+          kind = "$pointerkind"
+        }
 
-      pointerInfo.byteOffset = buf:length()
-      $pointertype
-      prims.writePadding(buf:length() - pointerInfo.byteOffset, buf)
+        pointerInfo.byteOffset = buf:length()
+        $pointertype
+        prims.writePadding(buf:length() - pointerInfo.byteOffset, buf)
 
-      buf.knownPointers[struct.$fieldname] = pointerInfo
+        buf.knownPointers[struct.$fieldname] = pointerInfo
+      end
+      pointerInfo.offset = (pointerInfo.byteOffset - pointerReservation$idx.offset) / 8
     end
-    pointerInfo.offset = (pointerInfo.byteOffset - pointerReservation$idx.offset) / 8
     pointerLsw, pointerMsw = ptrs.packPointer(pointerInfo)
     prims.writePointer(pointerLsw, pointerMsw, buf, pointerReservation$idx, $default)
   ]],
@@ -318,9 +322,12 @@ local function codec(layout, fieldname, ty)
   end
   if ty.kind == "enum" then
     -- discriminator is initially read as u16 and converted to friendly name if one matches
+    -- TODO: fix type id
+    --local idstr = u64compat.toHex(ty.id)
+    local idstr = ty.name
     return {
-      readermethod = "prims.readu16",
-      writermethod = "prims.writeu16",
+      readermethod = string.format("runtimedata.readenum[%q]", idstr),
+      writermethod = string.format("runtimedata.writeenum[%q]", idstr),
       bitwidthln = 4,
     }
   end
@@ -452,11 +459,21 @@ function codegen:structtree(layout)
   local pointervalues = {}
   local runtimedata = {
     layouts = {},
-    vindexes = {},
+    readenum = {},
+    writeenum = {},
   }
 
   for i, union in ipairs(enums) do
-    runtimedata.vindexes[u64compat.toHex(union.type.id)] = union.vindex
+    -- TODO: fix type id
+    --local idstr = u64compat.toHex(union.type.id)
+    local idstr = union.type.name
+    runtimedata.readenum[idstr] = function(buf, structOffset, structLength, fieldOffset, defaultXorBuf)
+      return primitives.readu16(buf, structOffset, structLength, fieldOffset, defaultXorBuf)
+    end
+    runtimedata.writeenum[idstr] = function(fieldname, buf, reservation, defaultXorBuf)
+      local fieldnum = union.vindex[fieldname]
+      return primitives.writeu16(fieldnum, buf, reservation, defaultXorBuf)
+    end
   end
 
   for i, pointer in ipairs(layout.pointers) do
@@ -527,6 +544,7 @@ function codegen:structreader(layout)
   end
   local structtree, runtimedata = self:structtree(layout)
   local code = parser_gen(structtree)
+  print("codegen:structreader_"..layout.name.."_"..tostring(layout.id))
   printCode(code)
   local result = assert(load(code, "codegen:structreader_"..layout.name.."_"..tostring(layout.id)))()(
     primitives, primtivesPointer, u64compat, self, runtimedata
@@ -546,6 +564,7 @@ function codegen:structwriter(layout)
   end
   local structtree, runtimedata = self:structtree(layout)
   local code = writer_gen(structtree)
+  print("codegen:structreader_"..layout.name.."_"..tostring(layout.id))
   printCode(code)
   local result = assert(load(code, "codegen:structwriter_"..layout.name.."_"..tostring(layout.id)))()(
     primitives, primtivesPointer, u64compat, self, runtimedata

@@ -24,6 +24,7 @@ local function createByteBuffer()
     cursor = 0,
     reservations = {},
     knownPointers = {},
+    size = bufferSize,
   }
   return setmetatable(self, ByteBuffer_mt)
 end
@@ -32,11 +33,25 @@ function ByteBuffer:length()
   return self.cursor
 end
 
+-- Doubles the buffer size
+function ByteBuffer:grow()
+  local newsize = self.size * 2
+  local newbuffer = ffi.new("uint8_t[?]", newsize)
+  ffi.copy(newbuffer, self.buffer, self.cursor)
+  self.buffer = newbuffer
+  self.size = newsize
+end
+
 -- Write some bytes into the buffer
 ---@param length integer length of the bytes to write
 ---@return ffi.cdata* pointer to the slice
 function ByteBuffer:write(length)
-  assert(self.cursor + length <= bufferSize, "ByteBuffer:write: length must be <= remaining buffer size")
+  if self.cursor + length > self.size then
+    self:grow()
+    -- tail call to re-run length check
+    -- TODO: optimize with a size hint to grow
+    return self:write(length)
+  end
   local slice = self.buffer + self.cursor
   self.cursor = self.cursor + length
   return slice
@@ -46,7 +61,12 @@ end
 ---@param length integer length of the slot to reserve
 ---@return SliceReservation
 function ByteBuffer:reserve(length)
-  assert(self.cursor + length <= bufferSize, "ByteBuffer:reserve: length must be <= remaining buffer size")
+  if self.cursor + length > self.size then
+    self:grow()
+    -- tail call to re-run length check
+    -- TODO: optimize with a size hint to grow
+    return self:reserve(length)
+  end
   local reservation = {
     offset = self.cursor,
     length = length,

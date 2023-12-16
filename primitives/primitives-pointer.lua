@@ -66,6 +66,8 @@ local function packPointer(pointer)
     return packStructPointer(pointer)
   elseif pointer.kind == "capability" then
     return packCapabilityPointer(pointer)
+  elseif pointer.kind == "null" then
+    return 0, 0
   end
   error("unhandled pointer kind " .. pointer.kind)
 end
