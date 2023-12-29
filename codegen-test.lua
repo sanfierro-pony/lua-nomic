@@ -1,8 +1,8 @@
-local lu = require'libs.luaunit'
+local lu = require'luaunit'
+local u64 = require'primitives/primitives-u64'
 local codegen = require'codegen'
 local schema = require'schema'
 local encdec = require'encdec'
-local u64 = require'primitives.primitives-u64'
 
 local testschema = schema.newschema("teststruct", "a test struct", u64"68859291b0c3")
 local teststruct = testschema:addstruct("teststruct", "a test struct")
@@ -32,9 +32,15 @@ end
 local schemaSchema = require 'schema-bootstrap'
 function testschemaschemacanschemaschema()
   local written = encdec.encode(schemaSchema.export.schema, schemaSchema)
-  p(written)
-  local struct = encdec.decode(schemaSchema, written)
-  p(struct)
+  local f = io.open("schema-schema.bin", "wb")
+  if not f then
+    error("couldn't open schema-schema.bin for writing")
+  end
+  f:write(written)
+  f:close()
+  require 'printer'.prettyPrint(schemaSchema.exports[1].type.fields[2], 2)
+  local struct = encdec.decode(schemaSchema.export.schema, written)
+  require 'printer'.prettyPrint(struct)
 end
 
 -- HACK: luaunit wants to find tests in globals and luvit doesn't run us with _ENV == _G

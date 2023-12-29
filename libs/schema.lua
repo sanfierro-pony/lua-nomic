@@ -1,5 +1,5 @@
 local hashing = require "schema-hash"
-local u64compat = require "primitives.primitives-u64"
+local u64compat = require "primitives/primitives-u64"
 
 local newstruct, newenum, newunion, newvariant, newinterface
 
@@ -35,16 +35,19 @@ local struct_mt = {
       if docstring ~= nil and type(docstring) ~= "string" then
         error "the docstring must be a string if present"
       end
+      if not id then
+        id = u64compat(hashing.hash{self.id, name})
+      end
       -- this id reuse/collision is benign because one is a field and the other is an enum type, and both are in the same schema, and neither is a top level export
       local enum = newenum(name, docstring, id)
       self:addfield(name, enum, docstring, id)
       return newunion(self, #self.fields, enum)
     end,
-    addunionfield = function(self, name, stype, descriminator, descriminant, docstring, id)
+    addunionfield = function(self, name, stype, discriminator, discriminant, docstring, id)
       assert(type(name) == "string", "the name of the field must be a string")
       assert(is_schematype(stype), "the type of the field must be a schema type")
-      assert(type(descriminator) == "number", "union specifier must be present")
-      assert(type(descriminant) == "number", "union descriminant must be present")
+      assert(type(discriminator) == "number", "union specifier must be present")
+      assert(type(discriminant) == "number", "union discriminant must be present")
       if docstring ~= nil and type(docstring) ~= "string" then
         error "the docstring must be a string if present"
       end
@@ -52,7 +55,7 @@ local struct_mt = {
         id = u64compat(hashing.hash{self.id, name})
       end
 
-      local field = {kind = "union", name = name, type = stype, docstring = docstring, descriminator = descriminator, descriminant = descriminant, id = id}
+      local field = {kind = "union", name = name, type = stype, docstring = docstring, discriminator = discriminator, discriminant = discriminant, id = id}
       self.fields[#self.fields + 1] = field
       self.field_by_name[name] = field
     end,
@@ -205,7 +208,10 @@ local enum_mt = {
 }
 
 function newenum(name, docstring, id)
-  if id ~= nil and not u64compat.isU64(id) then
+  if id == nil then
+    error "enums must have an id"
+  end
+  if not u64compat.isU64(id) then
     error "id must be a u64"
   end
   local self = {
@@ -350,7 +356,10 @@ local schema_mt = {
         id = u64compat(hashing.hash{self.id, name})
       end
       local struct = newstruct(name, docstring, id)
-      self.exports[#self.exports + 1] = struct
+      self.exports[#self.exports + 1] = {
+        kind = 'struct',
+        type = struct,
+      }
       self.export[name] = struct
       return struct
     end,
@@ -363,7 +372,10 @@ local schema_mt = {
         id = u64compat(hashing.hash{self.id, name})
       end
       local t = newenum(name, docstring, id)
-      self.exports[#self.exports + 1] = t
+      self.exports[#self.exports + 1] = {
+        kind = 'enum',
+        type = t,
+      }
       self.export[name] = t
       return t
     end,
@@ -376,7 +388,10 @@ local schema_mt = {
         id = u64compat(hashing.hash{self.id, name})
       end
       local struct = newinterface(name, docstring, id)
-      self.exports[#self.exports + 1] = struct
+      self.exports[#self.exports + 1] = {
+        kind = 'interface',
+        type = struct,
+      }
       self.export[name] = struct
       return struct
     end,
@@ -389,7 +404,10 @@ local schema_mt = {
         id = u64compat(hashing.hash{self.id, name})
       end
       local t = newnewtype(name, basetype, docstring, id)
-      self.exports[#self.exports + 1] = t
+      self.exports[#self.exports + 1] = {
+        kind = 'newtype',
+        type = t,
+      }
       self.export[name] = t
       return t
     end,
@@ -601,12 +619,13 @@ local primitive_mt = {
   end
 }
 
-local function newprimitive(name, bitwidthln)
+local function newprimitive(name, logbitwidth)
   return setmetatable(
     {
       id = u64compat(hashing.hash{primitive_schema_hash, name}),
       name = name,
-      bitwidthln = bitwidthln,
+      type = name,
+      logbitwidth = logbitwidth,
     }, primitive_mt)
 end
 
@@ -625,20 +644,27 @@ local generic_mt = {
         error("generic type args must all be schematypes, got " .. type(v))
       end
     end
-    return setmetatable({kind = self.kind, args = args}, bound_generic_mt)
+    return setmetatable({kind = self.kind, basetype = self.basetype, args = args}, bound_generic_mt)
   end
 }
 
-local function newgeneric(kind)
-  return setmetatable({kind=kind}, generic_mt)
+---@alias BaseType { kind: "list" } | { kind: "maybe" } | { kind: "struct" | "interface", type: table }
+
+---@param basetype BaseType
+local function newgeneric(basetype)
+  return setmetatable({kind = "generic", basetype = basetype}, generic_mt)
 end
 
 local primitives = {}
 
+local list = newgeneric({ kind = "list" })
+
 return {
-  list = newgeneric("list"),
-  maybe = newgeneric("maybe"),
-  text = text,
+  list = list,
+  maybe = newgeneric({ kind = "maybe" }),
+  text = newnewtype(
+    "text", list, "a UTF-8 encoded string with a NUL terminator", u64compat(hashing.hash{primitive_schema_hash, "text"})
+  ),
   union = union,
   enum = enum,
   method = method,

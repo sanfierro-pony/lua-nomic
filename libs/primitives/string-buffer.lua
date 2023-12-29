@@ -2,12 +2,6 @@
 ---@field offset integer offset into buffer where this reservation was added
 ---@field length integer length of the reservation
 
----@class PointerInfo
----@field kind string
----@field bufferOffset integer offset from start of buffer, not the offset in the pointer
----@field datasize integer
----@field pointersize integer
-
 ---@class StringBuffer
 ---@field private buffer (string|SlotReservation)[]
 ---@field private cursor integer current offset into buffer, in characters

@@ -1,7 +1,7 @@
 -- parse from schema, save to buf, read from buf, compare
 --
 local schema = require 'schema'
-local u64 = require 'primitives.primitives-u64'
+local u64 = require 'primitives/primitives-u64'
 
 local text, union, enum, variant = schema.text, schema.union, schema.enum, schema.variant
 local maybe, method = schema.maybe, schema.method
@@ -25,11 +25,11 @@ field:define {
   union "kind" (2) "what kind of field it is, whether it is always present, whether it is part of an enum"
   {
     variant "field" (4) "This field is just an ordinary field that is always accessible" {};
-    variant "union" (5) "The field is part of a union, only accessible when the descriminator has a particular value"
+    variant "union" (5) "The field is part of a union, only accessible when the discriminator has a particular value"
     {
       -- support your local union
-      u16 "descriminator" (6) "which component of the struct holds the discriminator for this union field";
-      u16 "descriminant" (7) "the value the descriminator field must take for this field to be valid.";
+      u16 "discriminator" (6) "which component of the struct holds the discriminator for this union field";
+      u16 "discriminant" (7) "the value the discriminator field must take for this field to be valid.";
     };
   };
   fieldid "id" (8) "The unique key for a field automatically derived from the initial name and the struct to verify forward compatibility. The collision domain for this key is within the parent struct.";

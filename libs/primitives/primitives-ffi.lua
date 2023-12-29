@@ -148,6 +148,16 @@ local function writeBools(bools, buf, reservation, default)
   writeVal(uint8, 1, val, buf, reservation, xorBuf)
 end
 
+local ctype_int64_t = ffi.typeof("int64_t")
+
+-- LuaJIT does NOT define number -> ULL conversion for negative numbers (https://github.com/LuaJIT/LuaJIT/issues/459),
+-- so we have to do it ourselves using int64_t as an intermediate.
+---@param val number
+---@return integer
+local function signedLuaIntToULL(val)
+  return ctype_int64_t(val) + 0ULL
+end
+
 ---@param buf string|ffi.cdata* buffer we're decoding from
 ---@param structOffset integer offset into buf struct starts at (64bit aligned)
 ---@param structLength integer length of struct (64bit aligned)
@@ -156,7 +166,9 @@ end
 ---@return number lsw, number msw
 local function readPointer(buf, structOffset, structLength, fieldOffset, defaultXorBuf)
   local bigPointer = readVal(uint64, 8, buf, structOffset, structLength, fieldOffset, defaultXorBuf)
-  return bit.band(bigPointer, 0xFFFFFFFF), bit.rshift(bigPointer, 32)
+  local lsw = bit.tobit(tonumber(bit.band(bigPointer, 0xFFFFFFFF)) --[[@as number]])
+  local msw = bit.tobit(tonumber(bit.rshift(bigPointer, 32)) --[[@as number]])
+  return lsw, msw
 end
 
 ---@param lsw number low 32 bits of pointer
@@ -165,7 +177,7 @@ end
 ---@param reservation SliceReservation|nil reservation to write to
 ---@param defaultXorBuf string|ffi.cdata*|nil default value to xor with
 local function writePointer(lsw, msw, buf, reservation, defaultXorBuf)
-  local bigPointer = bit.bor(bit.lshift(msw + 0ULL, 32), bit.band(lsw, 0xFFFFFFFF))
+  local bigPointer = bit.bor(bit.lshift(signedLuaIntToULL(msw), 32), bit.band(signedLuaIntToULL(lsw), 0xFFFFFFFFULL))
   writeVal(uint64, 8, bigPointer, buf, reservation, defaultXorBuf)
 end
 
@@ -177,7 +189,7 @@ local function readBytes(buf, offset, length)
   if type(buf) == 'string' then
     buf = ffi.cast(charbuf, buf)
   end
-  return ffi.string(buf + offset, length)
+  return ffi.string(buf + offset * WORD_SIZE, length)
 end
 
 ---@param bytes string bytes to write
@@ -204,7 +216,7 @@ local function writePadding(existingLen, buf)
 end
 
 local pffi = {
-  createBuffer = require 'primitives.byte-buffer'.createByteBuffer,
+  createBuffer = require 'primitives/byte-buffer'.createByteBuffer,
 
   readBools = readBools,
   writeBools = writeBools,

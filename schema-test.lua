@@ -22,7 +22,7 @@ local fieldid = S:newtype("fieldid", u64)
 
 local function printstruct(struct)
   for i, field in ipairs(struct.fields) do
-    p(i - 1, field.name, field.type, field.descriminator and struct.fields[field.descriminator].name, field.descriminant)
+    p(i - 1, field.name, field.type, field.discriminator and struct.fields[field.discriminator].name, field.discriminant)
   end
 end
 
@@ -37,7 +37,7 @@ local function toComparableLayout(fieldlayout)
     comparable.pointers[ptr.name] = ptr.offset
   end
   for idx, dat in ipairs(fieldlayout.data) do
-    comparable.data[dat.name] = dat.offset * pow(2, dat.lnbitwidth)
+    comparable.data[dat.name] = dat.offset * pow(2, dat.logbitwidth)
   end
  return comparable
 end
@@ -50,11 +50,11 @@ function testSchemaBootstrapFieldStruct()
     union "kind" (2) "what kind of field it is, whether it is always present, whether it is part of an enum"
     {
       variant "field" (4) "This field is just an ordinary field that is always accessible" {};
-      variant "union" (5) "The field is part of a union, only accessible when the descriminator has a particular value"
+      variant "union" (5) "The field is part of a union, only accessible when the discriminator has a particular value"
       {
         -- support your local union
-        u16 "descriminator" (6) "which component of the struct holds the discriminator for this union field";
-        u16 "descriminant" (7) "the value the descriminator field must take for this field to be valid.";
+        u16 "discriminator" (6) "which component of the struct holds the discriminator for this union field";
+        u16 "discriminant" (7) "the value the discriminator field must take for this field to be valid.";
       };
     };
     fieldid "id" (8) "The unique key for a field automatically derived from the initial name and the struct to verify forward compatibility. The collision domain for this key is within the parent struct.";
@@ -67,8 +67,8 @@ function testSchemaBootstrapFieldStruct()
     -- bit offsets
     data = {
       kind = 0 * 16,
-      descriminator = 1 * 16,
-      descriminant = 2 * 16,
+      discriminator = 1 * 16,
+      discriminant = 2 * 16,
       id = 1 * 64,
       b1 = 3*16,
       b2 = 3*16 + 1,

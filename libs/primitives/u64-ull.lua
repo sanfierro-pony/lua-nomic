@@ -32,7 +32,7 @@ local function parseHex(text)
   local result = 0ULL
   for i = 1, #text do
     local c = text:sub(i, i)
-    local digit = tonumber(c, 16) + 0ULL
+    local digit = tonumber(c, 16)
     if digit == nil then
       error("invalid hex digit " .. c)
     end

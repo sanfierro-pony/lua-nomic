@@ -1,17 +1,17 @@
 local success, bit, bxor, ffi
 success, bit  = pcall(require, "bit")
-bit = success and bit or require "primitives.polyfill.bit"
+bit = success and bit or require "primitives/polyfill/bit"
 bxor = bit.bxor
 success, ffi = pcall(require, "ffi")
 ffi = success and ffi or nil
 
 local bint64 = (require "bint")(64)
 
-local pow = math.pow or require "primitives.polyfill.math_pow"
-local pointers = require "primitives.primitives-pointer"
+local pow = math.pow or require "primitives/polyfill/math_pow"
+local pointers = require "primitives/primitives-pointer"
 local band = bit and bit.band
 
-local stringBuffer = require "primitives.string-buffer"
+local stringBuffer = require "primitives/string-buffer"
 
 -- if we have math.type we have a lua that has separate int and float types
 -- if type(large int) is 'integer' then we have at least 64 bit int

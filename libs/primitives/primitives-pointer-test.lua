@@ -1,6 +1,6 @@
-local pointers = require'primitives.primitives-pointer'
+local pointers = require'primitives/primitives-pointer'
 local lu = require'libs.luaunit'
-local bit = _G['bit'] or _G['bit32'] or require 'primitives.polyfill.bit'
+local bit = _G['bit'] or _G['bit32'] or require 'primitives/polyfill.bit'
 
 
 local function roundTripPointer(lsw, msw)

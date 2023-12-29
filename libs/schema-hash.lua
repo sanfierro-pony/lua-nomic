@@ -34,14 +34,16 @@ local function hash(t)
   return string.sub(partialHash(), 1, hashHexChars)
 end
 
-if not ... then -- if ran as main script with no args do selftest
-  math.randomseed(os.time())
-  print("randomHash() =\t\t", randomHash())
+
+local function selftest()
   local testTable = {"test", 1234, "DEADBEEF"}
   local result = hash(testTable)
-  print("hash({test, 1234, DEADBEEF}) =\t", result)
-  assert(result == "6398e970acf8dc2c", "hash of test table should be 6398e970acf8dc2c")
+  if result ~= "6398e970acf8dc2c" then
+    error("hash of test table should be 6398e970acf8dc2c, got " .. result)
+  end
 end
+
+selftest()
 
 return {
   hash = hash,
