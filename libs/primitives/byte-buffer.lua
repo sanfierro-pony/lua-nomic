@@ -135,11 +135,7 @@ function ByteBuffer:getPointer(key)
   if areaPointers == nil then
     return nil
   end
-  local pointerInfo = areaPointers[key.thing]
-  if pointerInfo == nil then
-    return nil
-  end
-  return tableutil.copy(pointerInfo)
+  return tableutil.copy(areaPointers[key.thing])
 end
 
 -- Add a pointer to a thing to the buffer
