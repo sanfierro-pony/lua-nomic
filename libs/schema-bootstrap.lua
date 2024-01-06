@@ -118,7 +118,7 @@ local generic = S:struct "generic" "A parameterized type"
 local newtype = S:struct "newtype" "a distinct wrapper stored exactly like some other type"
 {
   text "name" (0) "The name of the distinct wrapper";
-  stype "base" (1) "The type being wrapped";
+  stype "basetype" (1) "The type being wrapped";
   typeid "id" (2) "A unique id automatically derived from context. The collision domain is the same as for struct.";
   text "docstring" (3) "Expanded documentation about what the newtype means.";
 }
