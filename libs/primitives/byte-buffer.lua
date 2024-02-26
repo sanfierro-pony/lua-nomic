@@ -6,7 +6,7 @@ local tableutil = require "tableutil"
 ---@field offset number offset into buffer where this reservation was added
 ---@field length number length of the slice reserved
 
----@class DelayedPointerWrite information about a pointed-to datum that needs to be written later
+---@class DelayedByteBufferPointerWrite information about a pointed-to datum that needs to be written later
 ---@field key CacheKey the key for the pointer cache
 ---@field default any? the default value for the pointer
 ---@field reservation SliceReservation the reservation for the pointer to this datum
@@ -18,14 +18,14 @@ local tableutil = require "tableutil"
 ---@field private buffer ffi.cdata*
 ---@field private cursor number current offset into buffer
 ---@field private reservations table<SliceReservation, boolean> reservations, must be empty to convert to string
----@field private pointerQueueStack Deque stack of queues of pointers to write (full type is Deque<Deque<DelayedPointerWrite>>)
+---@field private pointerQueueStack Deque stack of queues of pointers to write (full type is Deque<Deque<DelayedByteBufferPointerWrite>>)
 ---@field private knownPointers table<string, table<any, PointerInfo>> map from cache key to pointer info, however the offset is absolute here
 local ByteBuffer = {}
 local ByteBuffer_mt = {
   __index = ByteBuffer;
 }
 
-local maxiumumBufferSize = math.pow(2, 32) - 1
+local maxiumumBufferSize = (2 ^ 32) - 1
 local initialBufferSize = 1024
 
 -- Creates a new ByteBuffer
@@ -95,7 +95,7 @@ end
 -- Fill in a reservation with bytes
 ---@param reservation SliceReservation
 ---@return ffi.cdata* pointer to the reserved slice
-function ByteBuffer:fill(reservation, writer)
+function ByteBuffer:fill(reservation)
   if self.reservations[reservation] == nil then
     error("ByteBuffer:fill: reservation must be unused")
   end
@@ -104,7 +104,7 @@ function ByteBuffer:fill(reservation, writer)
 end
 
 -- Push a new queue of pointers to write
----@return Deque # real type is Deque<DelayedPointerWrite>
+---@return Deque # real type is Deque<DelayedByteBufferPointerWrite>
 function ByteBuffer:pushPointerQueue()
   local queue = Deque:new()
   self.pointerQueueStack:pushBack(queue)
@@ -112,7 +112,7 @@ function ByteBuffer:pushPointerQueue()
 end
 
 -- Get a queue to add pointers to
----@return Deque # real type is Deque<DelayedPointerWrite>
+---@return Deque # real type is Deque<DelayedByteBufferPointerWrite>
 function ByteBuffer:getPointerQueue()
   local queue = self.pointerQueueStack:peekBack()
   if queue == nil then
@@ -122,7 +122,7 @@ function ByteBuffer:getPointerQueue()
 end
 
 -- Pop a queue of pointers to write
----@return Deque? # real type is Deque<DelayedPointerWrite>
+---@return Deque? # real type is Deque<DelayedByteBufferPointerWrite>
 function ByteBuffer:popPointerQueue()
   return self.pointerQueueStack:popBack()
 end
@@ -156,7 +156,7 @@ end
 -- Retrieves the buffer as a string
 ---@return string
 function ByteBuffer:toString()
-  assert(next(self.reservations) == nil, "ByteBuffer:buffer: reservations must be empty to convert to string")
+  assert(next(self.reservations) == nil, "ByteBuffer:toString: reservations must be empty to convert to string")
   return ffi.string(self.buffer, self.cursor)
 end
 

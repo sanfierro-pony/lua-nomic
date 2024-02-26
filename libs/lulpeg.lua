@@ -1,12 +1,12 @@
 -- LuLPeg, a pure Lua port of LPeg, Roberto Ierusalimschy's
 -- Parsing Expression Grammars library.
--- 
+--
 -- Copyright (C) Pierre-Yves Gerardy.
 -- Released under the Romantic WTF Public License (cf. the LICENSE
 -- file or the end of this file, whichever is present).
--- 
+--
 -- See http://www.inf.puc-rio.br/~roberto/lpeg/ for the original.
--- 
+--
 -- The re.lua module and the test suite (tests/lpeg.*.*.tests.lua)
 -- are part of the original LPeg distribution.
 local _ENV,       loaded, packages, release, require_
@@ -2901,12 +2901,12 @@ return require"init"
 --                   The Romantic WTF public license.
 --                   --------------------------------
 --                   a.k.a. version "<3" or simply v3
--- 
--- 
+--
+--
 --            Dear user,
--- 
+--
 --            The LuLPeg library
--- 
+--
 --                                             \
 --                                              '.,__
 --                                           \  /
@@ -2932,24 +2932,24 @@ return require"init"
 --                        #####
 --                        ###
 --                        #
--- 
+--
 --               -- Pierre-Yves
--- 
--- 
--- 
+--
+--
+--
 --            P.S.: Even though I poured my heart into this work,
 --                  I _cannot_ provide any warranty regarding
 --                  its fitness for _any_ purpose. You
 --                  acknowledge that I will not be held liable
 --                  for any damage its use could incur.
--- 
+--
 -- -----------------------------------------------------------------------------
--- 
+--
 -- LuLPeg, Copyright (C) 2013 Pierre-Yves Gérardy.
--- 
+--
 -- The `re` module and lpeg.*.*.test.lua,
 -- Copyright (C) 2013 Lua.org, PUC-Rio.
--- 
+--
 -- Permission is hereby granted, free of charge,
 -- to any person obtaining a copy of this software and
 -- associated documentation files (the "Software"),
@@ -2960,10 +2960,10 @@ return require"init"
 -- and to permit persons to whom the Software is
 -- furnished to do so,
 -- subject to the following conditions:
--- 
+--
 -- The above copyright notice and this permission notice
 -- shall be included in all copies or substantial portions of the Software.
--- 
+--
 -- THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
 -- EXPRESS OR IMPLIED,
 -- INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,

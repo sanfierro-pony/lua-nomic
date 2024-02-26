@@ -1,6 +1,7 @@
-local sha2 = require"libs.sha2"
+local sha2 = require"sha2"
+local u64compat = require "primitives/primitives-u64"
 
-local uint32_max = math.pow(2, 32)
+local uint32_max = 2 ^ 32
 local hashFunc = sha2.sha256
 local hashBytes = 8
 -- we truncate the hash to this many chars
@@ -26,8 +27,12 @@ local function hash(t)
   local partialHash = hashFunc()
   for i = 1, #t do
     local v = t[i]
-    if type(v) == 'table' then
-      error("hash(): unexpected table in input list") -- unexpected table in bagging area
+    if u64compat.isU64(v) then
+      v = u64compat.toHex(v)
+    end
+    local typeV = type(v)
+    if typeV ~= 'string' and typeV ~= 'number' then
+      error("hash(): unexpected " .. typeV .. " in input list") -- unexpected table in bagging area
     end
     partialHash = partialHash(tostring(v))
   end

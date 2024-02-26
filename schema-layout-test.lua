@@ -4,13 +4,12 @@ local schema = require'schema'
 local u8, u16, u32, u64 = schema.u8, schema.u16, schema.u32, schema.u64
 local Holes = layout.Holes
 local p = _G.p or print
-local pow = math.pow or load("return function(a, b) return a ^ b end")
 
 local function name_to_start(packed)
   local packed_by_name = {}
   p(packed)
   for _, v in ipairs(packed.data) do
-    packed_by_name[v.name] = v.offset * pow(2, v.logbitwidth)
+    packed_by_name[v.name] = v.offset * (2 ^ v.logbitwidth)
   end
   return packed_by_name
 end

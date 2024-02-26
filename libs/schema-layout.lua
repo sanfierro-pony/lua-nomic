@@ -1,4 +1,4 @@
-local pow = math.pow or load("return function(a, b) return a ^ b end")
+local schema = require 'schema'
 
 ---@class Holes
 ---@field private holeArray table<number, number[]>
@@ -111,12 +111,17 @@ local function getwidth(ty)
   if ty.basetype then
     return getwidth(ty.basetype)
   end
+  print("error in struct")
   require 'printer'.prettyPrint(ty)
   error "TODO: getwidth for type"
 end
 
 local function ispointer(ty)
   if ty.kind == 'struct' or ty.kind == 'generic' then
+    return true
+  end
+
+  if ty == schema.anyPointer then
     return true
   end
 
@@ -182,8 +187,9 @@ end
 ---@return StructLayout
 local function layoutstruct(struct)
   if struct.fields == nil then
+    print("error in struct")
     require 'printer'.prettyPrint(struct, 1)
-    error("struct " .. struct.name .. " has no fields")
+    error("struct " .. (struct.name or "nil") .. " has no fields")
   end
   local h = { holes = Holes:new() }
   local words = 0
@@ -216,7 +222,7 @@ local function layoutstruct(struct)
           end
         end
       else
-        holeOffset = words * pow(2, maxLogSize - logbitwidth)
+        holeOffset = words * (2 ^ (maxLogSize - logbitwidth))
         words = words + 1
         -- Don't add word-sized holes here, as we don't need to track them at the top level
         if logbitwidth < maxLogSize then
@@ -346,6 +352,16 @@ local function layoutstruct(struct)
           }
         end
       end
+      if variantHoles.pointerHoles then
+        for _, holeOffset in ipairs(variantHoles.pointerHoles) do
+          packed.pointers[#packed.pointers + 1] = {
+            kind = "padding",
+            offset = holeOffset,
+            discriminator = discriminator,
+            discriminant = variant,
+          }
+        end
+      end
     end
   end
 
@@ -355,9 +371,9 @@ local function layoutstruct(struct)
     end
   end
 
-  for _, field in ipairs(packed.pointers) do
-    if field.discriminator then
-      field.discriminator = packed_by_idx[field.discriminator].order
+  for _, ptr in ipairs(packed.pointers) do
+    if ptr.discriminator then
+      ptr.discriminator = packed_by_idx[ptr.discriminator].order
     end
   end
 

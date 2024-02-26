@@ -9,7 +9,7 @@
 --   [3] = "other", -- caps if lsw all zeroes except kind, else vtable (future use)
 -- }
 
-local bit = _G['bit'] or _G['bit32'] or require 'primitives/polyfill/bit'
+local bit = _G and (_G['bit'] or _G['bit32']) or require 'primitives/polyfill/bit'
 
 ---@class StructPointerInfo
 ---@field kind "struct"

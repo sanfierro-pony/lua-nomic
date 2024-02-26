@@ -6,6 +6,20 @@ local html = deps.html
 local elem = html.elems
 ---@module "client-svg"
 local svg = deps.svg
+---@type fun(): Conn
+local getServerConn = deps.getServerConn
+---@module "promise"
+local promise = deps.promise
+---@module "printer"
+local printer = deps.printer
+---@module "rpc"
+local rpc = deps.rpc
+---@module "schema-layout"
+local schemaLayout = deps.schemaLayout
+
+local bootstrap = promise.await(getServerConn():bootstrap())
+print("the awaited bootstrap!")
+printer.prettyPrint(bootstrap.answer:get(schemaLayout.layoutstruct(rpc.rpcTest.export.simpleMessage)))
 
 ---@class Icon
 ---@field path string

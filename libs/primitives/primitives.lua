@@ -6,8 +6,6 @@ success, ffi = pcall(require, "ffi")
 ffi = success and ffi or nil
 
 local bint64 = (require "bint")(64)
-
-local pow = math.pow or require "primitives/polyfill/math_pow"
 local pointers = require "primitives/primitives-pointer"
 local band = bit and bit.band
 
@@ -127,7 +125,7 @@ local function readBools(buf, structOffset, structLength, fieldOffset, default)
   local val = readLuaInt(1, false, buf, structOffset, structLength, fieldOffset, string.char(default))
   local result = {}
   for i = 0, 7 do
-    result[i + 1] = band(val, pow(2, i)) ~= 0
+    result[i + 1] = band(val, (2 ^ i)) ~= 0
   end
   return result
 end
@@ -141,7 +139,7 @@ local function packBools(bools, buf, reservation, default)
   local val = 0
   for i = 1, #bools do
     if bools[i] then
-      val = val + pow(2, i - 1)
+      val = val + (2 ^ (i - 1))
     end
   end
   packLuaInt(1, false, val, buf, reservation, string.char(default))
@@ -192,7 +190,9 @@ local function partsToBigInt64(lsw, msw)
 end
 
 local function bigInt64ToParts(val)
-  return val[1], val[2]
+  local lsw = bint64.touinteger(bint64.__band(val, 0xFFFFFFFF))
+  local msw = bint64.touinteger(bint64.__shr(val, 32))
+  return lsw, msw
 end
 
 ---@param signed boolean whether int is signed or unsigned
@@ -227,7 +227,7 @@ end
 ---@param defaultBuf string|nil buffer with default value for this field (can pass nil instead of all zeroes if default is zeroes)
 local function packBigInt64(signed, val, buf, reservation, defaultBuf)
   -- FIXME: bint64 doesn't have an unsigned version
-  if type(val) ~= 'number' and getmetatable(val) ~= bint64 then
+  if type(val) ~= 'number' and not bint64.isbint(val) then
     error("packBigInt64: val must be a number or bint64, got " .. type(val))
   end
   local lsw, msw = bigInt64ToParts(val)
@@ -255,11 +255,30 @@ local function packPointer(lsw, msw, buf, reservation, defaultBuf)
   packBigInt64(false, partsToBigInt64(lsw, msw), buf, reservation, defaultBuf)
 end
 
----@param existingLen number the byte length of the existing content, padding will be emitted to make this fit word alignment
+---@param amount number bytes of padding to append
 ---@param buf StringBuffer buffer to append to
-local function packPadding(existingLen, buf)
-  local padding = (WORD_SIZE_BYTES - (existingLen % WORD_SIZE_BYTES)) % WORD_SIZE_BYTES
-  buf:append(string.rep("\0", padding))
+local function packPadding(amount, buf)
+  buf:append(string.rep("\0", amount))
+end
+
+---@param buf string buffer we're decoding from
+---@param offset integer offset into buf
+---@param length integer length of bytes to read
+---@return string
+local function readBytes(buf, offset, length)
+  local realOffset = offset * WORD_SIZE_BYTES
+  return string.sub(buf, realOffset + 1, realOffset + length)
+end
+
+---@param bytes string bytes to append
+---@param buf StringBuffer buffer to append to
+---@param reservation SlotReservation|nil reservation in buffer for this field, if any
+local function packBytes(bytes, buf, reservation)
+  if reservation ~= nil then
+    buf:fill(reservation, bytes)
+  else
+    buf:append(bytes)
+  end
 end
 
 local primitives = {
@@ -275,6 +294,7 @@ local primitives = {
   readi64 = function(...) return readBigInt64(true, ...) end,
   readu64 = function(...) return readBigInt64(false, ...) end,
   readPointer = readPointer,
+  readBytes = readBytes,
 
   writeBools = packBools,
   writei8 = function(...) return packLuaInt(1, true, ...) end,
@@ -286,6 +306,7 @@ local primitives = {
   writei64 = function(...) return packBigInt64(true, ...) end,
   writeu64 = function(...) return packBigInt64(false, ...) end,
   writePointer = packPointer,
+  writeBytes = packBytes,
   writePadding = packPadding,
 
   readFloat = function(...) return readFp(false, ...) end,
@@ -298,48 +319,70 @@ local primitives = {
 -- can we run this fast enough to exhaustively test the 32 bit types and lower survive roundtrips?
 local function selfTest()
   local function eq(expected, actual)
-    assert(expected == actual, tostring(expected) .. "!=" .. tostring(actual))
+    if expected == actual then
+      return
+    end
+    local printer = require 'printer'
+    error(printer.toPrettyString(expected) .. " != " .. printer.toPrettyString(actual))
+  end
+
+  local function arrayEq(expected, actual)
+    if #expected ~= #actual then
+      error("arrayEq: expected length " .. #expected .. " but got " .. #actual)
+    end
+    for i = 1, #expected do
+      if expected[i] ~= actual[i] then
+        local printer = require 'printer'
+        error("arrayEq: expected " .. printer.toPrettyString(expected[i]) .. " but got " .. printer.toPrettyString(actual[i]))
+      end
+    end
   end
 
   eq(0, primitives.readi8("\0", 0, 1, 0, "\0"))
   eq(-1, primitives.readi8("\255", 0, 1, 0, "\0"))
   eq(-1, primitives.readi8("\0", 0, 1, 0, "\255"))
-  eq(1, primitives.readInt64(false, "\1\0\0\0\0\0\0\0", 0, 1, 0, nil))
-  eq(true, primitives.readBool("\1", 0, 1, 0, false))
-  assert(false == primitives.readBool("\1", 0, 1, 0, true))
-  assert(0 == primitives.readFloat("\0\0\0\0", 0, 1, 0, nil))
+  eq(bint64.tobint(1), primitives.readu64("\1\0\0\0\0\0\0\0", 0, 1, 0, nil))
+  arrayEq({false, false, false, false, false, false, false, false}, primitives.readBools("\0", 0, 1, 0, 0))
+  arrayEq({true, false, false, false, false, false, false, false}, primitives.readBools("\1", 0, 1, 0, 0))
+  arrayEq({false, false, false, false, false, false, false, false}, primitives.readBools("\1", 0, 1, 0, 1))
+  eq(0, primitives.readFloat("\0\0\0\0", 0, 1, 0, nil))
   -- struct.pack("<f", 0.1234).hex() in python
   assert(math.abs(primitives.readFloat("\x24\xb9\xfc\x3d", 0, 1, 0, nil) - 0.1234) < 0.00001)
   assert(0 == primitives.readDouble("\0\0\0\0\0\0\0\0", 0, 1, 0, nil))
   assert(math.abs(primitives.readDouble("\xf3\x8e\x53\x74\x24\x97\xbf\x3f", 0, 1, 0, nil) - 0.1234) < 0.000000001)
 
   local buffer = primitives.createBuffer()
-  primitives.writeFloat(false, buffer, 0.1234, nil)
+  primitives.writeFloat(0.1234, buffer, nil)
   assert("24b9fc3d" == toHex(buffer:toString()))
 
   buffer = primitives.createBuffer()
-  primitives.writeDouble(false, buffer, 0.1234, nil)
+  primitives.writeDouble(0.1234, buffer, nil)
   assert("f38e53742497bf3f" == toHex(buffer:toString()))
 
   buffer = primitives.createBuffer()
-  primitives.writeu8(buffer, 123, nil)
+  primitives.writeu8(123, buffer, nil)
   assert("7b" == toHex(buffer:toString()))
 
   buffer = primitives.createBuffer()
-  primitives.writeu16(buffer, 1234, nil)
+  primitives.writeu16(1234, buffer, nil)
   assert("d204" == toHex(buffer:toString()))
 
   buffer = primitives.createBuffer()
-  primitives.writeu32(buffer, 1234, nil)
+  primitives.writeu32(1234, buffer, nil)
   assert("d2040000" == toHex(buffer:toString()))
 
   buffer = primitives.createBuffer()
-  primitives.writeu64(buffer, 1234, nil)
+  primitives.writeu64(bint64.tobint(1234), buffer, nil)
   eq("d204000000000000", toHex(buffer:toString()))
 
   buffer = primitives.createBuffer()
-  primitives.writei8(buffer, -128, nil)
+  primitives.writei8(-128, buffer, nil)
   assert("80" == toHex(buffer:toString()))
+
+  local bigInt = partsToBigInt64(0, 65537)
+  local lsw, msw = bigInt64ToParts(bigInt)
+  eq(0, lsw)
+  eq(65537, msw)
 end
 
 selfTest()

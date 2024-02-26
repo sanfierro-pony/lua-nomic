@@ -75,7 +75,7 @@ local function encode(schema, struct)
       break
     end
     while true do
-      ---@type DelayedPointerWrite?
+      ---@type DelayedByteBufferPointerWrite?
       local next = nextQueue:popFront()
       if next == nil then
         break

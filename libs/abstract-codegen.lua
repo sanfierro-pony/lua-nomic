@@ -1,8 +1,10 @@
 -- EVIL HACK to bypass strict mode blocking LuLPeg when the _ENV local isn't present
-_G._ENV = nil
+if _G then
+  _G._ENV = nil
+end
 
 local success, lpeg = pcall(require, "lpeg")
-lpeg = success and lpeg or require"libs.lulpeg":register(not _ENV and _G)
+lpeg = success and lpeg or require"libs/lulpeg":register(not _ENV and _G)
 
 local M = {}
 

@@ -51,7 +51,7 @@ local function readVal(ty, numBytes, buf, structOffset, structLength, fieldOffse
     fieldOffset = 0
   elseif (fieldOffset + 1) * numBytes > structLength then
     -- partially outside struct, fail
-    error("readVal: end of field is outside struct")
+    error("readVal: end of field is outside struct; fieldOffset=" .. fieldOffset .. ", numBytes=" .. numBytes .. ", structLength=" .. structLength)
   end
 
   local reader = ffi.cast(uint8, buf + structOffset + fieldOffset * numBytes)
@@ -123,7 +123,7 @@ local function readBools(buf, structOffset, structLength, fieldOffset, default)
   local val = readVal(uint8, 1, buf, structOffset, structLength, fieldOffset, xorBuf)
   local result = {}
   for i = 0, 7 do
-    result[i + 1] = bit.band(val, math.pow(2, i)) ~= 0
+    result[i + 1] = bit.band(val, (2 ^ i)) ~= 0
   end
   return tunpack(result)
 end
@@ -140,7 +140,7 @@ local function writeBools(bools, buf, reservation, default)
   local val = 0
   for i = 1, #bools do
     if bools[i] then
-      val = val + math.pow(2, i - 1)
+      val = val + (2 ^ (i - 1))
     end
   end
   local writer = ffi.cast(uint8, xorBuf)
@@ -205,12 +205,11 @@ local function writeBytes(bytes, buf, reservation)
   ffi.copy(slice, bytes, #bytes)
 end
 
----@param existingLen number the byte length of the existing content, padding will be emitted to make this fit word alignment
+---@param amount number the number of bytes of padding to write
 ---@param buf ByteBuffer buffer to write to
-local function writePadding(existingLen, buf)
-  local padding = (WORD_SIZE - (existingLen % WORD_SIZE)) % WORD_SIZE
-  local slice = ffi.cast(uint8, buf:write(padding))
-  for i = 1, padding do
+local function writePadding(amount, buf)
+  local slice = ffi.cast(uint8, buf:write(amount))
+  for i = 1, amount do
     slice[i - 1] = 0
   end
 end

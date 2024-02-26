@@ -1,10 +1,8 @@
 local u64compat = require'primitives/primitives-u64'
--- Not sure we need this to have a fallback, but pretty-print does it in luvit
-local success, uv = pcall(require, 'uv')
+local success, helper = pcall(require, "printer-helper-luvit")
 if not success then
-  success, uv = pcall(require, 'luv')
+  helper = require "printer-helper-generic"
 end
-assert(success, uv)
 
 -- Print a code string with line numbers for easy debugging.
 ---@param code string the code to print
@@ -30,66 +28,32 @@ local function printCode(code, start)
   end
 end
 
-local function colorfulToString(value)
-  local t = type(value)
-  if t == "string" then
-    return "\27[1;32m\"" .. value .. "\"\27[0m"
-  elseif t == "number" then
-    return "\27[1;33m" .. tostring(value) .. "\27[0m"
-  elseif u64compat.isU64(value) then
-    return "\27[1;31m" .. tostring(value) .. "\27[0m"
-  elseif t == "boolean" then
-    return "\27[1;34m" .. tostring(value) .. "\27[0m"
-  elseif t == "table" then
-    return "\27[1;35m" .. tostring(value) .. "\27[0m"
-  elseif t == "function" then
-    return "\27[1;36m" .. tostring(value) .. "\27[0m"
-  elseif t == "nil" then
-    return "\27[1;37m" .. tostring(value) .. "\27[0m"
-  else
-    return tostring(value)
-  end
+local function isTableToInspect(value)
+  return type(value) == "table" and not u64compat.isU64(value)
 end
 
-local function console_write(fs, s)
-  if uv.guess_handle(uv.fileno(fs) --[[@as integer]]) == 'tty' then
-    repeat
-      local n, e = uv.try_write(fs, s)
-      if n then
-        s = s:sub(n+1)
-        n = 0
-      else
-        ---@cast e string
-        if e:match('^EAGAIN') then
-          n = 0
-        else
-          assert(n, e)
-        end
-      end
-    until n==#s
-  else
-    uv.write(fs, s)
-  end
-end
-
-local stdout = require 'pretty-print'.stdout
-
-local function prettyPrintCore(value, maxDepth, indent, recursiveCheck)
-  if type(value) == "table" then
+local function buildPrettyString(builder, value, maxDepth, indent, recursiveCheck)
+  if isTableToInspect(value) then
     if recursiveCheck[value] then
-      print(colorfulToString(value) .. " (recursive)")
+      helper.appendToString(builder, value)
+      builder[#builder + 1] = " (recursive)\n"
     else
-      console_write(stdout, colorfulToString(value) .. " {")
+      helper.appendToString(builder, value)
+      builder[#builder + 1] = " {"
       local keys = {}
       for k in pairs(value) do
-        table.insert(keys, k)
+        keys[#keys + 1] = k
       end
       if #keys == 1 and type(value[keys[1]]) ~= "table" then
         local k = keys[1]
         local v = value[k]
-        print(" " .. colorfulToString(k) .. " = " .. colorfulToString(v) .. " }")
+        builder[#builder + 1] = " "
+        helper.appendToString(builder, k)
+        builder[#builder + 1] = " = "
+        helper.appendToString(builder, v)
+        builder[#builder + 1] = " }\n"
       elseif #keys > 0 then
-        print("")
+        builder[#builder + 1] = "\n"
         table.sort(keys)
         local newMaxDepth = maxDepth
         if maxDepth ~= nil then
@@ -98,32 +62,53 @@ local function prettyPrintCore(value, maxDepth, indent, recursiveCheck)
         recursiveCheck[value] = true
         for _, k in ipairs(keys) do
           local v = value[k]
-          console_write(stdout, indent .. "  " .. colorfulToString(k) .. " = ")
-          if maxDepth == 0 and type(v) == "table" then
-            print(colorfulToString(v) .. " (stopped at depth limit)")
+          builder[#builder + 1] = indent
+          builder[#builder + 1] = "  "
+          helper.appendToString(builder, k)
+          builder[#builder + 1] = " = "
+          if maxDepth == 0 and isTableToInspect(v) then
+            helper.appendToString(builder, v)
+            builder[#builder + 1] = " (stopped at depth limit)\n"
           else
-            prettyPrintCore(v, newMaxDepth, indent .. "  ", recursiveCheck)
+            buildPrettyString(builder, v, newMaxDepth, indent .. "  ", recursiveCheck)
           end
         end
         recursiveCheck[value] = nil
-        print(indent .. "}")
+        builder[#builder + 1] = indent
+        builder[#builder + 1] = "}\n"
       else
-        print(" }")
+        builder[#builder + 1] = " }\n"
       end
     end
   else
-    print(colorfulToString(value))
+    helper.appendToString(builder, value)
+    builder[#builder + 1] = "\n"
   end
+end
+
+-- Get a pretty string for a value. This may contain ANSI color codes.
+---@param value any the value to get a pretty string for
+---@param maxDepth number|integer|nil the maximum depth to print, nil for unlimited, 0 for no recursion
+local function toPrettyString(value, maxDepth)
+  local builder = {}
+  buildPrettyString(builder, value, maxDepth, "", {})
+  -- Remove trailing newline
+  if builder[#builder]:sub(-1) == "\n" then
+    builder[#builder] = builder[#builder]:sub(1, -2)
+  end
+  return table.concat(builder)
 end
 
 -- Pretty print a value.
 ---@param value any the value to print
 ---@param maxDepth number|integer|nil the maximum depth to print, nil for unlimited, 0 for no recursion
 local function prettyPrint(value, maxDepth)
-  prettyPrintCore(value, maxDepth, "", {})
+  local string = toPrettyString(value, maxDepth)
+  print(string)
 end
 
 return {
+  toPrettyString = toPrettyString,
   printCode = printCode,
   prettyPrint = prettyPrint,
 }

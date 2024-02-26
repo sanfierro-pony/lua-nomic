@@ -41,7 +41,7 @@ local struct_mt = {
       -- this id reuse/collision is benign because one is a field and the other is an enum type, and both are in the same schema, and neither is a top level export
       local enum = newenum(name, docstring, id)
       self:addfield(name, enum, docstring, id)
-      return newunion(self, #self.fields, enum)
+      return newunion(id, self, #self.fields, enum)
     end,
     addunionfield = function(self, name, stype, discriminator, discriminant, docstring, id)
       assert(type(name) == "string", "the name of the field must be a string")
@@ -118,9 +118,10 @@ local union_mt = {
   __call = function(self, ...) return defer_union_def(self, ...) end
 }
 
-function newunion(parent, descpos, enum)
+function newunion(id, parent, descpos, enum)
   assert(type(descpos) == "number", "descpos must be a number")
   local self = {
+    id = id,
     parent = parent,
     descpos = descpos,
     enum = enum
@@ -153,7 +154,7 @@ local variant_mt = {
       end
       local enum = newenum(name, docstring, id)
       self:addfield(name, enum, docstring, id)
-      return newunion(self, #self.parent.parent.fields, enum)
+      return newunion(id, self, #self.parent.parent.fields, enum)
     end,
     addunionfield = function(self, name, stype, descpos, descval, docstring, id)
       assert(type(name) == "string", "the name of the field must be a string")
@@ -648,7 +649,7 @@ local generic_mt = {
   end
 }
 
----@alias BaseType { kind: "list" } | { kind: "maybe" } | { kind: "struct" | "interface", type: table }
+---@alias BaseType { kind: "list" | "maybe" | "anyPointer" } | { kind: "struct" | "interface", type: table }
 
 ---@param basetype BaseType
 local function newgeneric(basetype)
@@ -659,11 +660,53 @@ local primitives = {}
 
 local list = newgeneric({ kind = "list" })
 
+-- AnyPointer from capnproto, values must be set using `anyPointer:new(layout, value)`, and read using `<struct>.<field>:get(layout)`
+-- Note: we locally store this in one of two states, either it has a `layout` and you must use that to read the value,
+-- or it has buffer data and we will blindly trust that the layout is correct. After reading the value, it will be assigned
+-- to the `value` field, and the layout will also be saved, ensuring that schemas are not mixed for a single value.
+local anyPointer = newprimitive("anyPointer", nil)
+local anyPointer_mt = { __index = anyPointer }
+function anyPointer:new(layout, value)
+  return setmetatable({layout = layout, value = value}, anyPointer_mt)
+end
+
+-- Make a new anyPointer from a decoder function
+---@param decoder fun(encdec, schema): any the function to decode the value given a schema
+function anyPointer:newRaw(decoder)
+  return setmetatable({
+    decoder = decoder,
+  }, anyPointer_mt)
+end
+
+-- Get the value from the anyPointer
+---@param layout table the schema layout to use
+function anyPointer:get(layout)
+  if self.layout then
+    if self.layout.id ~= layout.id then
+      error("schema layout mismatch: expected " .. tostring(self.layout.id) .. ", got " .. tostring(layout.id))
+    end
+    return self.value
+  end
+  local value = self.decoder(layout)
+
+  -- Allow GC to free decoder
+  self.decoder = nil
+
+  -- Save the value and layout
+  self.layout = layout
+  self.value = value
+  return value
+end
+
 return {
   list = list,
+  anyPointer = anyPointer,
   maybe = newgeneric({ kind = "maybe" }),
   text = newnewtype(
     "text", list, "a UTF-8 encoded string with a NUL terminator", u64compat(hashing.hash{primitive_schema_hash, "text"})
+  ),
+  blob = newnewtype(
+    "blob", list, "raw bytes", u64compat(hashing.hash{primitive_schema_hash, "blob"})
   ),
   union = union,
   enum = enum,

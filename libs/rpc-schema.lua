@@ -1,10 +1,16 @@
+local schema = require 'schema'
+local schema_schema = require 'schema-bootstrap'
+local u64compat = require 'primitives/primitives-u64'
 
+local union = schema.union
+local variant = schema.variant
+local u16 = schema.u16
+local u64 = schema.u64
+local list = schema.list
+local bool = schema.bool
+local anyPointer = schema.anyPointer
 
-local schema = require './schema'
-local schema_schema = require './schema_bootstrap'
-
-
-local S = schema.newschema("rpc", "the primary schema for rpc connections", "658d7e89c7bce12f")
+local S = schema.newschema("rpc", "the primary schema for rpc connections", u64compat"658d7e89c7bce12f")
 
 local questionId = S:newtype("questionId", schema.u32)
 local exportId = S:newtype("exportId", schema.u32)
@@ -105,29 +111,6 @@ S:struct "methodid" "The interface and method id that identify a specific method
   u16 "method" (1);
 }
 
-S:struct "question" "The actual data sent in a question describing what to do. This deliberately doesn't include the actual id of the question. The systems"
-{
-  union "kind" (0) "What the system is asking to be done"
-  {
-    variant "invoke" (1) "This question is a call of an interface method. The instructions may patch the "
-    {
-      list(S.export.Ins) "prog" (2) "The instructions composing this rpc call";
-      schema.anypointer "initial" (8) "The struct used for the initial value on the stack";
-      list(S.export.refdescriptor) "refpool" (3) "The references which this rpc call considers data dependencies";
-      list(S.export.methodid) "methods" (4) "The methods which this rpc call intends to invoke";
-    };
-  };
-  list(S.export.refdescriptor) "causaldeps" (5) "The references which this question considers to be required to resolve before it.";
-  bool "dontreturn" (6) "Whether or not this question should have its answer sent over the wire to the originator. If a value will only be used for pipelined calls before being dropped, setting this flag will reduce network traffic";
-  bool "dontpipeline" (7) "If this flag is set, the answer will not be used for pipelining. This doesn't do much, because the value must be retained for retransmission in case of packet loss anyways, but maybe this provides an optimization.";
-
-}
-
-S:struct "exception" "A description of a failure"
-{
-
-}
-
 S:struct "refdescriptor" "A description of a capability reference in the scope of a connection"
 {
   union "kind" (0) "What the domain of the reference is"
@@ -153,17 +136,44 @@ S:struct "refdescriptor" "A description of a capability reference in the scope o
     variant "thirdPartyHosted" (11) "This reference refers to something hosted by a third party and which the receiver is expected to directly connect to make use of if possible."
     {
       exportId "proxy" (12) "A proxy for the remote capability hosted on the sender to ensure pinning for the duration of the three way handshake and to allow a fallback for clients that don't know how to connect to the actual host to make calls on";
-      list(schema.anydoc) "source" (13) "A list of ways that we or the third party host believe that the host of this object can be reached, the receiver may discard any that it doesn't understand and try the remainder in any strategy it pleases and may reuse an existing connection to the host, but must only accept the provided cap once.";
+      -- list(schema.anydoc) "source" (13) "A list of ways that we or the third party host believe that the host of this object can be reached, the receiver may discard any that it doesn't understand and try the remainder in any strategy it pleases and may reuse an existing connection to the host, but must only accept the provided cap once.";
       schema.blob "nonce" (14) "a cryptographic nonce to present to the third party as proof of being the intended recipient of the transfer";
     };
   };
 }
 
-payload = S:genericstruct "refwrapper" (function(descriptor, payload)
-    return {
-      list(descriptor) "references" (0) "The backing reference descriptions which cap-pointers in the payload refer to";
-      payload "payload" (1) "the data which may contain cap-pointers that should be resolved by the references described here.";
-      } end)
+S:struct "question" "The actual data sent in a question describing what to do. This deliberately doesn't include the actual id of the question. The systems"
+{
+  questionId "id" (10) "The id of this question, which is used to refer to it in the answer";
+  union "kind" (0) "What the system is asking to be done"
+  {
+    variant "invoke" (1) "This question is a call of an interface method. The instructions may patch the "
+    {
+      list(S.export.Ins) "prog" (2) "The instructions composing this rpc call";
+      anyPointer "initial" (8) "The struct used for the initial value on the stack";
+      list(S.export.refdescriptor) "refpool" (3) "The references which this rpc call considers data dependencies";
+      list(S.export.methodid) "methods" (4) "The methods which this rpc call intends to invoke";
+    };
+    variant "bootstrap" (9) "Get the bootstrap interface"
+    {
+    };
+  };
+  list(S.export.refdescriptor) "causaldeps" (5) "The references which this question considers to be required to resolve before it.";
+  bool "dontreturn" (6) "Whether or not this question should have its answer sent over the wire to the originator. If a value will only be used for pipelined calls before being dropped, setting this flag will reduce network traffic";
+  bool "dontpipeline" (7) "If this flag is set, the answer will not be used for pipelining. This doesn't do much, because the value must be retained for retransmission in case of packet loss anyways, but maybe this provides an optimization.";
+
+}
+
+S:struct "exception" "A description of a failure"
+{
+
+}
+
+-- payload = S:genericstruct "refwrapper" (function(descriptor, payload)
+--     return {
+--       list(descriptor) "references" (0) "The backing reference descriptions which cap-pointers in the payload refer to";
+--       payload "payload" (1) "the data which may contain cap-pointers that should be resolved by the references described here.";
+--       } end)
 
 local call = S:struct "methodcall" "A description of the information required to perform a method call"
 {
@@ -189,15 +199,18 @@ message:define {
     };
     variant "abort" (3) "the connection is being terminated deliberately for a reason"
     {
-      S.exports.exception "error" (4) "the error causing the termination";
+      S.export.exception "error" (4) "the error causing the termination";
     };
-    variant "bootstrap" (5) "retrieve the public bootstrap interface. Not all systems need to provide a public bootstrap interface, or include methods on it. However, it can be good for debugability to implement the introspection and schema sharing interfaces on this."
+    variant "question" (5) "A question is being asked"
     {
-      questionId "question" (6) "what question id slot this operation was assigned";
+      S.export.question "question" (6) "the question being asked";
     };
-    variant "call" (7) "Want to call a method on a thing"
+    variant "answer" (7) "An answer is being provided"
     {
-      questionId "question" (8) "what question id slot this operation was assigned";
-    }
+      questionId "questionId" (8) "the question being answered";
+      anyPointer "answer" (9) "the answer to the question";
+    };
   }
 }
+
+return S

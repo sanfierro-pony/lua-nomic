@@ -5,7 +5,7 @@ local tableutil = require 'tableutil'
 
 local parser_gen = acg.generator {
    block = [[
-return function (prims, ptrs, u64compat, cg, runtimedata)
+return function (schemaModule, prims, ptrs, u64compat, cg, runtimedata)
   local function read_struct(buf, structoffset, datalength, ptrlength, path)
     local result = {}
     $(
@@ -30,7 +30,7 @@ end
     end
   ]],
   pointer = [[
-    pointerLsw, pointerMsw = prims.readPointer(buf, structoffset, datalength + ptrlength, datalength + $fieldoffset, $default)
+    pointerLsw, pointerMsw = prims.readPointer(buf, structoffset + datalength, ptrlength, $fieldoffset, $default)
     pointerInfo = ptrs.unpackPointer(pointerLsw, pointerMsw)
     if pointerInfo.kind == "$pointerkind" then
       local offsetbase = structoffset + datalength + $fieldoffset + 1
@@ -47,6 +47,16 @@ end
     )
   ]],
   structcodec = 'cg.structreaderlazy(cg, u64compat"$id", runtimedata.layouts["$id"])',
+  anypointer = [[
+    do
+      local function decoder(layout)
+        return cg.structreaderlazy(cg, layout.id, function() return layout end)(
+          buf, offsetbase + pointerInfo.offset, pointerInfo.datasize, pointerInfo.pointersize
+        )
+      end
+      value = schemaModule.anyPointer:newRaw(decoder)
+    end
+  ]],
   listgeneric = [[
     do
       value = {}
@@ -120,7 +130,7 @@ return function (prims, ptrs, u64compat, cg, runtimedata)
 end
 ]],
   field = "$writermethod(struct.$fieldname, buf, nil, $default)",
-  padding = "prims.writePadding($filledbytecount, buf)",
+  padding = "prims.writePadding($amount, buf)",
   bools = [[
     prims.writeBools({ $(, )boolfields }, buf, nil, $default)
   ]],
@@ -151,9 +161,6 @@ end
 
       local start = buf:length()
       $pointertype
-      -- I'm not sure we actually need this, since structs should always be word-aligned...
-      -- Lists might need it, but we can move it in to the list writer if so.
-      prims.writePadding(buf:length() - start, buf)
 
       return pointerInfo
     end
@@ -167,6 +174,18 @@ end
     end
   ]],
   structcodec = 'cg.structwriterlazy(cg, u64compat"$id", runtimedata.layouts["$id"])',
+  anypointer = [[
+    do
+      if value.layout == nil then
+        error("anypointer: serializing a pointer without a layout is not supported")
+      end
+      pointerInfo.kind = "struct" -- override this since we know it's a struct
+      buf:pushPointerQueue()
+      local datasize, pointersize = cg.structwriterlazy(cg, value.layout.id, function() return value.layout end)(value.value, buf)
+      pointerInfo.datasize = datasize
+      pointerInfo.pointersize = pointersize
+    end
+  ]],
   listgeneric = [[
     for _, v in ipairs(value) do
       $writermethod(v, buf, nil, nil)
@@ -350,7 +369,7 @@ local function structcodec(ty)
 end
 
 local function offset_in_bits(field)
-  return field.offset * math.pow(2, field.logbitwidth)
+  return field.offset * (2 ^ field.logbitwidth)
 end
 
 -- Wrap an item in a variant check if necessary.
@@ -386,7 +405,7 @@ local function combine_boolfields(layout, boolfields)
   end
   local combined_default = 0
   for i, f in ipairs(boolfields) do
-    combined_default = combined_default + (f.default or 0) * math.pow(2, i - 1)
+    combined_default = combined_default + (f.default or 0) * (2 ^ (i - 1))
   end
   return wrapvariant(layout.data, boolfields[1], setfieldinfo(layout, {
     kind = "bools",
@@ -414,7 +433,7 @@ local function addfield(layout, runtimedata, fields, boolfields, field)
     -- convert bools collected to a single u8 field
     if #boolfields > 0 then
       fields[#fields + 1] = combine_boolfields(layout, boolfields)
-      boolfields = {}
+      tableutil.clear(boolfields)
     end
   end
   if is_bool then
@@ -423,7 +442,7 @@ local function addfield(layout, runtimedata, fields, boolfields, field)
     if field.kind == "padding" then
       fields[#fields + 1] = wrapvariant(layout.data, field, {
         kind = "padding",
-        filledbytecount = 8 - math.pow(2, field.logbitwidth - 3),
+        amount = 2 ^ (field.logbitwidth - 3),
       })
     else
       if field.type.kind == "enum" then
@@ -462,7 +481,7 @@ end
 local function finishfields(layout, fields, boolfields)
   if #boolfields > 0 then
     fields[#fields + 1] = combine_boolfields(layout, boolfields)
-    boolfields = {}
+    tableutil.clear(boolfields)
   end
 end
 
@@ -519,6 +538,13 @@ local function addpointer(layout, runtimedata, pointers, pointervalues, pointer)
     pointertype = {
       kind = "listtext",
     }
+  elseif pointer.type == schema.anyPointer then
+    area = "anypointer"
+    pointerkind = "struct" -- may need to be dynamic later
+    pointertype = {
+      kind = "anypointer",
+      fieldname = pointer.name,
+    }
   else
     error("codegen:structtree: pointer type not supported: " .. pointer.type.kind)
   end
@@ -540,6 +566,14 @@ local function addpointer(layout, runtimedata, pointers, pointervalues, pointer)
   }
 end
 
+local function compareFieldOffsets(a, b)
+  return offset_in_bits(a) < offset_in_bits(b)
+end
+
+local function comparePointerOffsets(a, b)
+  return a.offset < b.offset
+end
+
 ---@param layout StructLayout
 function codegen:structtree(layout)
   local fields = {}
@@ -551,18 +585,24 @@ function codegen:structtree(layout)
     vindex = {},
   }
   local boolfields = {}
-  table.sort(layout.data, function(a, b)
-    return offset_in_bits(a) < offset_in_bits(b)
-  end)
-  for _, field in ipairs(layout.data) do
+  local layoutFieldsSorted = tableutil.sortedCopy(layout.data, compareFieldOffsets)
+  for _, field in ipairs(layoutFieldsSorted) do
     addfield(layout, runtimedata, fields, boolfields, field)
   end
   finishfields(layout, fields, boolfields)
 
+  local layoutPointersSorted = tableutil.sortedCopy(layout.pointers, comparePointerOffsets)
   local pointers = {}
   local pointervalues = {}
-  for i, pointer in ipairs(layout.pointers) do
-    addpointer(layout, runtimedata, pointers, pointervalues, pointer)
+  for i, pointer in ipairs(layoutPointersSorted) do
+    if pointer.kind == "padding" then
+      pointers[#pointers + 1] = wrapvariant(layout.data, pointer, {
+        kind = "padding",
+        amount = 8,
+      })
+    else
+      addpointer(layout, runtimedata, pointers, pointervalues, pointer)
+    end
   end
 
   local pointerqueue = ""
@@ -591,7 +631,7 @@ function codegen:structreader(layout)
   local structtree, runtimedata = self:structtree(layout)
   local code = parser_gen(structtree)
   local result = assert(load(code, "codegen:structreader_"..layout.name.."_"..u64compat.toHex(layout.id)))()(
-    primitives, primtivesPointer, u64compat, self, runtimedata
+    schema, primitives, primtivesPointer, u64compat, self, runtimedata
   )
   self.structreaders[layout.id] = result
   return result

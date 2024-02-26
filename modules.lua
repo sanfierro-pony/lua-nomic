@@ -24,6 +24,17 @@ return function(use_weaktables)
     root_module = {}
   end
 
+  local is_proxy
+  if use_weaktables then
+    function is_proxy(obj)
+      return proxy_refs[obj] ~= nil
+    end
+  else
+    function is_proxy(obj)
+      return type(obj) == 'table' and rawget(obj, proxy_key) ~= nil
+    end
+  end
+
   local proxy_get_origin
   if use_weaktables then
     function proxy_get_origin(obj)
@@ -62,8 +73,8 @@ return function(use_weaktables)
 
 local function translate(obj, module_src, module_dst) -- translate values across a module boundary to maintain sandboxing
   local t = type(obj)
-  if t == 'string' or t == 'number' or t == 'boolean' or t == 'nil' or t == 'userdata' then
-    return obj -- immutable primitives and string may be passed directly
+  if t == 'string' or t == 'number' or t == 'boolean' or t == 'nil' or t == 'userdata' or t == 'thread' then
+    return obj -- immutable primitives, string, and thread may be passed directly
   elseif t == "table" then
     local origin = proxy_get_origin(obj)
     if origin then
@@ -125,56 +136,98 @@ local proxy_mt = { -- metatable for proxies
     proxy_get_target(self)[translate(k, owner, origin)] = translate(v, owner, origin)
   end,
   __add = function(self, other)
-    local origin = proxy_get_origin(self)
-    local owner = proxy_get_owner(self)
+    local origin
+    local owner
+    if is_proxy(self) then
+      origin = proxy_get_origin(self)
+      owner = proxy_get_owner(self)
+    else
+      origin = proxy_get_origin(other)
+      owner = proxy_get_owner(other)
+    end
     return
       translate(
-        proxy_get_target(self) + translate(other, owner, origin),
+        translate(self, owner, origin) + translate(other, owner, origin),
         origin, owner
       )
   end,
   __sub = function(self, other)
-    local origin = proxy_get_origin(self)
-    local owner = proxy_get_owner(self)
+    local origin
+    local owner
+    if is_proxy(self) then
+      origin = proxy_get_origin(self)
+      owner = proxy_get_owner(self)
+    else
+      origin = proxy_get_origin(other)
+      owner = proxy_get_owner(other)
+    end
     return
       translate(
-        proxy_get_target(self) - translate(other, owner, origin),
+        translate(self, owner, origin) - translate(other, owner, origin),
         origin, owner
       )
   end,
   __mul = function(self, other)
-    local origin = proxy_get_origin(self)
-    local owner = proxy_get_owner(self)
+    local origin
+    local owner
+    if is_proxy(self) then
+      origin = proxy_get_origin(self)
+      owner = proxy_get_owner(self)
+    else
+      origin = proxy_get_origin(other)
+      owner = proxy_get_owner(other)
+    end
     return
       translate(
-        proxy_get_target(self) * translate(other, owner, origin),
+        translate(self, owner, origin) * translate(other, owner, origin),
         origin, owner
       )
   end,
   __div = function(self, other)
-    local origin = proxy_get_origin(self)
-    local owner = proxy_get_owner(self)
+    local origin
+    local owner
+    if is_proxy(self) then
+      origin = proxy_get_origin(self)
+      owner = proxy_get_owner(self)
+    else
+      origin = proxy_get_origin(other)
+      owner = proxy_get_owner(other)
+    end
     return
       translate(
-        proxy_get_target(self) / translate(other, owner, origin),
+        translate(self, owner, origin) / translate(other, owner, origin),
         origin, owner
       )
   end,
   __mod = function(self, other)
-    local origin = proxy_get_origin(self)
-    local owner = proxy_get_owner(self)
+    local origin
+    local owner
+    if is_proxy(self) then
+      origin = proxy_get_origin(self)
+      owner = proxy_get_owner(self)
+    else
+      origin = proxy_get_origin(other)
+      owner = proxy_get_owner(other)
+    end
     return
       translate(
-        proxy_get_target(self) % translate(other, owner, origin),
+        translate(self, owner, origin) % translate(other, owner, origin),
         origin, owner
       )
   end,
   __pow = function(self, other)
-    local origin = proxy_get_origin(self)
-    local owner = proxy_get_owner(self)
+    local origin
+    local owner
+    if is_proxy(self) then
+      origin = proxy_get_origin(self)
+      owner = proxy_get_owner(self)
+    else
+      origin = proxy_get_origin(other)
+      owner = proxy_get_owner(other)
+    end
     return
       translate(
-        proxy_get_target(self) ^ translate(other, owner, origin),
+        translate(self, owner, origin) ^ translate(other, owner, origin),
         origin, owner
       )
   end,
@@ -191,15 +244,18 @@ local proxy_mt = { -- metatable for proxies
     local origin = proxy_get_origin(self)
     local owner = proxy_get_owner(self)
     return
-      translate(
+      translate_args(
+        origin, owner,
         proxy_get_target(self)(
           translate_args(owner, origin, ...)
-                        ),
-        origin, owner
+                        )
       )
   end,
   __tostring = function(self) return tostring(proxy_get_target(self)) end,
-  __eq = function(self, other) return rawequal(proxy_get_origin(self), proxy_get_origin(other)) and proxy_get_target(self) == proxy_get_target(other) end
+  __eq = function(self, other)
+    return rawequal(proxy_get_origin(self), proxy_get_origin(other)) and proxy_get_target(self) == proxy_get_target(other)
+  end,
+  __len = function(self) return #proxy_get_target(self) end,
   --[[__uncall = function(self)
     return uncall(proxy_origins[self])
   end,]]
@@ -224,6 +280,7 @@ local proxy_private_mt = { -- metatable for proxies that hide their state
   __call = proxy_mt.__call,
   __tostring = proxy_mt.__tostring,
   __eq = proxy_mt.__eq,
+  __len = proxy_mt.__len,
   __uncall = proxy_mt.__uncall,
 }
 local proxy_opaque_mt = { -- metatable for proxies that block access from external modules
@@ -240,18 +297,39 @@ local proxy_opaque_mt = { -- metatable for proxies that block access from extern
   -- __uncall = proxy_mt.__uncall,
 }
 
+local sandboxed_type
+if use_weaktables then
+  sandboxed_type = type
+else
+  function sandboxed_type(obj)
+    if is_proxy(obj) then
+      return type(proxy_get_target(obj))
+    else
+      return type(obj)
+    end
+  end
+end
+
 local sandboxed_pairs
 local sandboxed_next
 if use_weaktables then
   sandboxed_next = next
 else
+  -- Next for a table that might be proxied
+  ---@param tab table the potentially proxied table
+  ---@param k any? the key to start at
   function sandboxed_next(tab, k)
-    local newk, v = next(tab, k)
-    if rawequal(newk, proxy_key) then
-      return next(tab, newk)
-    else
-      return newk, v
+    local target = proxy_get_target(tab)
+    if target == nil then
+      return next(tab, k)
     end
+    local origin = proxy_get_origin(tab)
+    local owner = proxy_get_owner(tab)
+    local target_key = translate(k, owner, origin)
+    local newk, newv = next(target, target_key)
+    local proxyk = translate(newk, origin, owner)
+    local proxyv = translate(newv, origin, owner)
+    return proxyk, proxyv
   end
 end
 
@@ -272,7 +350,11 @@ do
       sandboxed_pairs = pairs
     else
       function sandboxed_pairs(obj)
-        return sandboxed_next, obj, nil
+        if type(obj) == "table" and proxy_get_target(obj) ~= nil then
+          return sandboxed_next, obj, nil
+        else
+          return pairs(obj)
+        end
       end
     end
   end
@@ -358,6 +440,7 @@ local function env_create(module)
     pairs = sandboxed_pairs,
     pcall = sandboxed_pcall,
     -- print needs to be implemented with some kind of logging system to make the module output available rather than just dumping to stdout
+    print = print,
     rawequal = rawequal,
     rawget = rawget,
     rawlen = rawlen,
@@ -366,7 +449,7 @@ local function env_create(module)
     setmetatable = setmetatable,
     tonumber = tonumber,
     tostring = tostring,
-    type = type,
+    type = sandboxed_type,
     _VERSION = _VERSION,
     xpcall = sandboxed_xpcall,
 
@@ -400,14 +483,33 @@ local function env_create(module)
     string = cloneTab(string), -- string library is safe
     ---@diagnostic disable-next-line:undefined-global
     utf8 = cloneTab(utf8), -- if utf8 lib is available, it is fine
-    table = cloneTab(table),
+    table = {
+      concat = table.concat,
+      insert = table.insert,
+      remove = table.remove,
+      sort = function(list, comp)
+        if comp == nil then
+          return table.sort(list)
+        end
+        local translatedComp = translate(comp, module, root_module)
+        return table.sort(list, function(...) return translatedComp(...) end)
+      end,
+      unpack = table.unpack,
+    },
     bit = cloneTab(bit),
     math = cloneTab(math),
     -- io is forbidden
     -- os is forbidden
     -- debug is forbidden pending a sandboxed version
-
+    debug = {
+      traceback = debug.traceback,
+    },
+    jshooks = {
+      -- Restrict the jshooks to only the functions we want to expose
+      arshift = jshooks.arshift,
+    }
   }
+  env['_G'] = env
   return env
 end
 
@@ -418,6 +520,9 @@ end
 ---@return function|nil module the loaded module
 ---@return nil|string err the resulting error
 local function module_create(code, source, ...)
+  if code == nil then
+    error("code cannot be nil for source '" .. tostring(source) .. "'")
+  end
   local module = {proxy_of = setmetatable({}, module_proxy_of_mt)}
   local env = env_create(module)
   local fn, err = env.load(code, source or '=(module_create)')

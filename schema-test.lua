@@ -3,7 +3,6 @@
 local schema = require 'schema'
 local cg = require 'codegen'
 local lu = require 'libs.luaunit'
-local pow = math.pow or load("return function(a, b) return a ^ b end")
 
 local text, union, enum, variant = schema.text, schema.union, schema.enum, schema.variant
 local u16, u32, u64, list = schema.u16, schema.u32, schema.u64, schema.list
@@ -37,7 +36,7 @@ local function toComparableLayout(fieldlayout)
     comparable.pointers[ptr.name] = ptr.offset
   end
   for idx, dat in ipairs(fieldlayout.data) do
-    comparable.data[dat.name] = dat.offset * pow(2, dat.logbitwidth)
+    comparable.data[dat.name] = dat.offset * (2 ^ dat.logbitwidth)
   end
  return comparable
 end
