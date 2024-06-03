@@ -1,0 +1,3 @@
+The nomic code runs in luvit; it is designed to be interacted with either from a browser or through an API allowing custom front ends. The system is based on a schematized serialization system with capabilities like capnproto. We are using a Lua interpreter in browser with a custom capability secure dom API similar to Elm to provide UI.
+We have modules.lua for isolating multiple pieces of code inside a single Lua runtime and RPC for allowing code in separate runtimes to communicate.
+(the serialization system is actually binary compatible with capnproto though the schemas are in a different form, and the RPC protocol is intended to be a huge improvement)
